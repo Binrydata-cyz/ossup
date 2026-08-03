@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OSS 上传助手</title>
+<link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6"/><path d="m6 12 6-6 6 6"/><path d="M4 21h16"/></svg>
+      </div>
+      <div class="brand-text">
+        <h1>OSS 上传助手</h1>
+        <p>ossutil 驱动 · 断点续传 · 增量上传</p>
+      </div>
+    </div>
+    <div class="engine" id="engineStatus" data-state="checking">
+      <span class="dot"></span>
+      <span id="engineText">正在检测 ossutil…</span>
+    </div>
+  </header>
+
+  <main class="content">
+
+    <section class="card">
+      <div class="card-head">
+        <span class="step">1</span>
+        <h2>访问凭证</h2>
+        <button type="button" class="ghost" id="toggleCred" aria-expanded="true">收起</button>
+      </div>
+      <div class="card-body" id="credBody">
+        <div class="grid">
+          <div class="field">
+            <label for="ak">AccessKey ID</label>
+            <input id="ak" type="text" spellcheck="false" autocomplete="off" placeholder="LTAI5t…" />
+          </div>
+          <div class="field">
+            <label for="sk">AccessKey Secret</label>
+            <div class="input-affix">
+              <input id="sk" type="password" spellcheck="false" autocomplete="off" placeholder="••••••••••••••••" />
+              <button type="button" class="affix-btn" id="toggleSk" title="显示 / 隐藏">显示</button>
+            </div>
+          </div>
+          <div class="field span2">
+            <label for="endpoint">Endpoint</label>
+            <input id="endpoint" type="text" spellcheck="false" list="endpoints" placeholder="oss-cn-hangzhou.aliyuncs.com" />
+            <datalist id="endpoints">
+              <option value="oss-cn-hangzhou.aliyuncs.com">华东1 杭州 · 外网</option>
+              <option value="oss-cn-hangzhou-internal.aliyuncs.com">华东1 杭州 · 内网</option>
+              <option value="oss-cn-shanghai.aliyuncs.com">华东2 上海 · 外网</option>
+              <option value="oss-cn-beijing.aliyuncs.com">华北2 北京 · 外网</option>
+              <option value="oss-cn-shenzhen.aliyuncs.com">华南1 深圳 · 外网</option>
+            </datalist>
+            <p class="hint">内网 Endpoint 只在同地域 ECS 上可用，但速度快很多。</p>
+          </div>
+        </div>
+        <label class="check">
+          <input id="remember" type="checkbox" />
+          <span>记住凭证（保存在本机用户配置目录）</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <span class="step">2</span>
+        <h2>上传目标</h2>
+      </div>
+      <div class="card-body">
+        <div class="grid">
+          <div class="field">
+            <label for="bucket">Bucket</label>
+            <input id="bucket" type="text" spellcheck="false" list="buckets" placeholder="my-dataset-bucket" />
+            <datalist id="buckets"></datalist>
+          </div>
+          <div class="field">
+            <label for="prefix">目标路径</label>
+            <input id="prefix" type="text" spellcheck="false" placeholder="delivery/2026-08/batch-01" />
+          </div>
+        </div>
+        <div class="target-preview" id="targetPreview">oss://<em>bucket</em>/<em>路径</em>/</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <span class="step">3</span>
+        <h2>本地文件</h2>
+      </div>
+      <div class="card-body">
+        <div class="dropzone" id="dropzone" tabindex="0" role="button">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M12 4v11"/><path d="m7 10 5-6 5 6"/></svg>
+          <p class="dz-title">把文件夹拖到这里</p>
+          <p class="dz-sub">或点击选择要上传的文件夹</p>
+        </div>
+        <div class="picked" id="picked" hidden>
+          <div class="picked-info">
+            <span class="picked-label">已选择</span>
+            <code id="pickedPath"></code>
+          </div>
+          <button type="button" class="ghost" id="clearPick">清除</button>
+        </div>
+      </div>
+    </section>
+
+    <details class="advanced" id="advanced">
+      <summary>高级设置</summary>
+      <div class="grid grid-3">
+        <div class="field">
+          <label for="jobs">文件并发 <span class="muted">--jobs</span></label>
+          <input id="jobs" type="number" min="1" max="64" value="5" />
+          <p class="hint">小文件多时调大</p>
+        </div>
+        <div class="field">
+          <label for="parallel">分片并发 <span class="muted">--parallel</span></label>
+          <input id="parallel" type="number" min="1" max="64" value="8" />
+          <p class="hint">大文件时调大</p>
+        </div>
+        <div class="field">
+          <label for="partSize">分片大小 <span class="muted">MB</span></label>
+          <input id="partSize" type="number" min="1" max="1024" value="16" />
+          <p class="hint">4K 视频建议 32–64</p>
+        </div>
+      </div>
+      <div class="field">
+        <label for="ossutilPath">ossutil 可执行文件路径</label>
+        <input id="ossutilPath" type="text" spellcheck="false" placeholder="留空则使用内置版本" />
+      </div>
+      <label class="check">
+        <input id="cliCreds" type="checkbox" />
+        <span>用命令行参数传递凭证（旧版 ossutil 兼容模式）</span>
+      </label>
+    </details>
+
+  </main>
+
+  <footer class="actionbar">
+    <div class="progress-block">
+      <div class="progress-top">
+        <span class="phase" id="phase">待命</span>
+        <span class="pct" id="pct">—</span>
+      </div>
+      <div class="bar"><div class="bar-fill" id="barFill" style="width:0%"></div></div>
+      <div class="stats">
+        <span><b id="statFiles">—</b> 文件</span>
+        <span><b id="statSpeed">—</b> 速度</span>
+        <span><b id="statElapsed">00:00</b> 用时</span>
+      </div>
+    </div>
+    <div class="buttons">
+      <button type="button" class="secondary" id="btnLog">日志</button>
+      <button type="button" class="secondary" id="btnCancel" disabled>停止</button>
+      <button type="button" class="primary" id="btnStart">开始上传</button>
+    </div>
+  </footer>
+
+  <section class="logpanel" id="logpanel" hidden>
+    <div class="log-head">
+      <span>ossutil 输出</span>
+      <div>
+        <button type="button" class="ghost" id="copyLog">复制</button>
+        <button type="button" class="ghost" id="closeLog">关闭</button>
+      </div>
+    </div>
+    <pre id="log"></pre>
+  </section>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

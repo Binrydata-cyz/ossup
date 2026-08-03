@@ -1,0 +1,8 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/ossutil
+src-tauri/binaries/ossutil.exe
+.DS_Store
+*.log

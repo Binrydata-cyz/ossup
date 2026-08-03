@@ -49,14 +49,8 @@
           <div class="field span2">
             <label for="endpoint">Endpoint</label>
             <input id="endpoint" type="text" spellcheck="false" list="endpoints" placeholder="oss-cn-hangzhou.aliyuncs.com" />
-            <datalist id="endpoints">
-              <option value="oss-cn-hangzhou.aliyuncs.com">华东1 杭州 · 外网</option>
-              <option value="oss-cn-hangzhou-internal.aliyuncs.com">华东1 杭州 · 内网</option>
-              <option value="oss-cn-shanghai.aliyuncs.com">华东2 上海 · 外网</option>
-              <option value="oss-cn-beijing.aliyuncs.com">华北2 北京 · 外网</option>
-              <option value="oss-cn-shenzhen.aliyuncs.com">华南1 深圳 · 外网</option>
-            </datalist>
-            <p class="hint">内网 Endpoint 只在同地域 ECS 上可用，但速度快很多。</p>
+            <datalist id="endpoints"></datalist>
+            <p class="hint">必须和 Bucket 所在地域一致，否则会报 <code>InvalidBucketName</code> / 连不上。内网 Endpoint 只在同地域 ECS 上可用，但速度快很多。</p>
           </div>
         </div>
         <label class="check">

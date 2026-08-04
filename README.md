@@ -10,7 +10,7 @@ Tauri 2 + Rust 写的 OSS 上传 GUI，内部调用阿里云官方 `ossutil`。
 | 传一半卡断，重开要重传 | `--checkpoint-dir` 固定在用户配置目录，重开软件再点一次就接着传 |
 | 重跑会把已传的再传一遍 | 带 `-u`，已存在且未修改的文件直接跳过 |
 | 不知道传完没有 | 传完自动跑一次 `ossutil ls`，对比本地 / 远端文件数 |
-| 路径手敲打错传到野目录 | Bucket / 路径支持预置下拉，实时预览完整 `oss://` 地址 |
+| 路径手敲打错传到野目录 | 整条 `oss://` 路径直接粘进去自动拆成 Bucket + 路径，实时预览完整地址 |
 | 凭证明文满天飞 | 默认写临时 0600 配置文件，不上命令行，任务结束即删 |
 
 ## 目录结构
@@ -50,7 +50,8 @@ npm run tauri:build    # 打包安装包
 ossutil cp -r -u -f \
   --config-file  <配置目录>/session.ossutilconfig \
   --checkpoint-dir <配置目录>/checkpoints \
-  --jobs 5 --parallel 8 --part-size 16777216 \
+  --output-dir <配置目录>/output \
+  -j 5 --parallel 8 --part-size 16777216 \
   <本地文件夹> oss://<bucket>/<prefix>/
 ```
 
@@ -90,6 +91,23 @@ ossutil cp -r -u -f \
 
 ## 兼容性
 
-进度解析对 ossutil 1.x 和 2.x 的输出都做了宽松匹配（百分比、速度、文件数
-各自独立取，取不到就不显示）。如果遇到鉴权报错，到“高级设置”里勾上
+内置的是 **ossutil 2.x**（当前 2.3.0）。2.x 和 1.x 的差异都在 `lib.rs` 里处理了：
+
+| | 1.x | 2.x |
+| --- | --- | --- |
+| 查版本 | `--version` | `version` 子命令（两个都试） |
+| 配置文件段名 | `[Credentials]` | `[default]` |
+| 文件并发 | `--jobs` | `-j` |
+| ls 短格式 | `-s` | `--short-format` |
+| 签名 | v1，只要 endpoint | 默认 v4，**强制要 region** |
+
+界面上只让填 Endpoint，region 由 `region_from_endpoint()` 从 endpoint 反推
+（`oss-cn-hangzhou.aliyuncs.com` → `cn-hangzhou`）。自定义域名 / 传输加速域名
+推不出 region，自动退回 `--sign-version v1`。
+
+进度解析对两个大版本都做了宽松匹配（百分比、速度、文件数各自独立取，
+取不到就不显示）。如果遇到鉴权报错，到“高级设置”里勾上
 “用命令行参数传递凭证”再试。
+
+换版本：把新的可执行文件覆盖到 `src-tauri/binaries/`，或在“高级设置”里指定路径。
+下载地址 `https://gosspublic.alicdn.com/ossutil/v2/<版本>/ossutil-<版本>-windows-amd64.zip`。

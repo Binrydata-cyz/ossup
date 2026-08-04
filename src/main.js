@@ -49,8 +49,8 @@ const state = {
 /* endpoints                                                           */
 /* ------------------------------------------------------------------ */
 
-/* 阿里云 OSS 公共云地域。endpoint 一律是 oss-<地域id>.aliyuncs.com，
-   内网版在地域 id 后加 -internal，所以这里只存 id + 中文名。
+/* 阿里云 OSS 公共云地域。endpoint 一律是 oss-<地域id>.aliyuncs.com，所以只存 id + 中文名。
+   只列外网 endpoint：内网 endpoint 只有同地域 ECS 上能连，桌面机上选到就是白等超时。
    ponytail: 不含金融云 / 政务云 / 无地域 Region，它们 endpoint 规则不同，手填即可。 */
 const REGIONS = [
 	["cn-hangzhou", "华东1 杭州"],
@@ -85,15 +85,26 @@ const REGIONS = [
 ]
 
 function fillEndpoints() {
-	$("endpoints").innerHTML = REGIONS.flatMap(([id, name]) => [
-		`<option value="oss-${id}.aliyuncs.com">${name} · 外网</option>`,
-		`<option value="oss-${id}-internal.aliyuncs.com">${name} · 内网</option>`,
-	]).join("")
+	$("endpoints").innerHTML = REGIONS.map(
+		([id, name]) => `<option value="oss-${id}.aliyuncs.com">${name}</option>`,
+	).join("")
 }
 
 /* 控制台复制过来常带 https:// 和结尾斜杠，ossutil 不认，统一擦掉 */
 function normalizeEndpoint(value) {
 	return value.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "")
+}
+
+/* 直接粘贴一整条 OSS 路径，拆成 bucket + 目标路径。
+   oss://bucket/a/b 和控制台给的 https://bucket.oss-cn-hangzhou.aliyuncs.com/a/b 都认，
+   后者顺手把 endpoint 也填上。认不出来就返回 null（当成普通 bucket 名）。 */
+function parseOssUri(text) {
+	const value = text.trim()
+	let m = /^oss:\/\/([^/\s]+)(?:\/(.*))?$/i.exec(value)
+	if (m) return { bucket: m[1], prefix: m[2] || "", endpoint: "" }
+	m = /^https?:\/\/([^./\s]+)\.(oss-[^/\s]+)(?:\/(.*))?$/i.exec(value)
+	if (m) return { bucket: m[1], prefix: m[3] || "", endpoint: m[2] }
+	return null
 }
 
 /* ------------------------------------------------------------------ */
@@ -173,6 +184,17 @@ function updateTargetPreview() {
 	ui.targetPreview.classList.add("ready")
 }
 
+function absorbOssUri(event) {
+	const parsed = parseOssUri(event.target.value)
+	if (parsed) {
+		ui.bucket.value = parsed.bucket
+		ui.prefix.value = cleanPrefix(parsed.prefix)
+		if (parsed.endpoint) ui.endpoint.value = normalizeEndpoint(parsed.endpoint)
+		toast(`已识别 oss://${parsed.bucket}/${cleanPrefix(parsed.prefix)}`, "success")
+	}
+	updateTargetPreview()
+}
+
 function setLocalPath(path) {
 	state.localPath = path || ""
 	if (state.localPath) {
@@ -194,9 +216,7 @@ async function loadConfig() {
 		const cfg = await invoke("load_config")
 		ui.ak.value = cfg.accessKeyId ?? ""
 		ui.sk.value = cfg.accessKeySecret ?? ""
-		ui.endpoint.value = normalizeEndpoint(
-			cfg.endpoint || "oss-cn-hangzhou.aliyuncs.com",
-		)
+		ui.endpoint.value = normalizeEndpoint(cfg.endpoint ?? "")
 		ui.bucket.value = cfg.bucket ?? ""
 		ui.prefix.value = cfg.prefix ?? ""
 		ui.remember.checked = !!cfg.remember
@@ -411,8 +431,9 @@ function wire() {
 		ui.endpoint.value = normalizeEndpoint(ui.endpoint.value)
 	})
 
-	ui.bucket.addEventListener("input", updateTargetPreview)
-	ui.prefix.addEventListener("input", updateTargetPreview)
+	/* 两个框都挂：整条路径粘到哪个框里都能拆开 */
+	ui.bucket.addEventListener("input", absorbOssUri)
+	ui.prefix.addEventListener("input", absorbOssUri)
 	ui.ossutilPath.addEventListener("change", checkEngine)
 
 	const pick = async () => {

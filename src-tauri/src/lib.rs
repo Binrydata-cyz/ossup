@@ -1,5 +1,10 @@
 //! OSS 上传助手 — a thin, reliable GUI over the official `ossutil` CLI.
 //!
+//! Targets **ossutil 2.x**, which differs from 1.x in ways that matter here:
+//! `version` is a subcommand (not `--version`), the config file uses a
+//! `[default]` profile, `--jobs` became `-j`, and v4 signing makes `region`
+//! mandatory — so it is derived from the endpoint, see `region_from_endpoint`.
+//!
 //! Design notes
 //! -------------
 //! * Credentials never touch the command line by default. They are written to a
@@ -76,7 +81,8 @@ impl Default for ClientConfig {
         Self {
             access_key_id: String::new(),
             access_key_secret: String::new(),
-            endpoint: "oss-cn-hangzhou.aliyuncs.com".into(),
+            // 留空，让用户自己选地域，避免默认值把数据传到错误的地域
+            endpoint: String::new(),
             bucket: String::new(),
             prefix: String::new(),
             remember: false,
@@ -137,19 +143,18 @@ fn load_config(app: AppHandle) -> Result<ClientConfig, String> {
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .unwrap_or_default();
 
-    let defaults = ClientConfig::default();
     Ok(ClientConfig {
         access_key_id: stored.access_key_id,
         access_key_secret: secret,
-        endpoint: if stored.endpoint.is_empty() {
-            defaults.endpoint
-        } else {
-            stored.endpoint
-        },
+        endpoint: stored.endpoint,
         bucket: stored.bucket,
         prefix: stored.prefix,
         remember: stored.remember,
-        jobs: if stored.jobs == 0 { d_jobs() } else { stored.jobs },
+        jobs: if stored.jobs == 0 {
+            d_jobs()
+        } else {
+            stored.jobs
+        },
         parallel: if stored.parallel == 0 {
             d_parallel()
         } else {
@@ -238,13 +243,24 @@ fn base_command(app: &AppHandle, custom: &str) -> Command {
 
 #[tauri::command]
 async fn check_ossutil(app: AppHandle, ossutil_path: String) -> Result<String, String> {
-    let output = base_command(&app, &ossutil_path)
-        .arg("--version")
+    // 2.x 是 `ossutil version`；1.x 只认 `--version`，两个都试一下。
+    let mut output = base_command(&app, &ossutil_path)
+        .arg("version")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
         .await
         .map_err(|e| format!("无法启动 ossutil: {e}"))?;
+
+    if !output.status.success() {
+        output = base_command(&app, &ossutil_path)
+            .arg("--version")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| format!("无法启动 ossutil: {e}"))?;
+    }
 
     let text = format!(
         "{}{}",
@@ -257,7 +273,12 @@ async fn check_ossutil(app: AppHandle, ossutil_path: String) -> Result<String, S
         .unwrap_or("ossutil")
         .trim()
         .to_string();
-    Ok(line)
+    // 2.x 的 `version` 只吐一个裸版本号（"2.3.0"），补上名字界面上才看得懂。
+    if line.to_lowercase().contains("ossutil") {
+        Ok(line)
+    } else {
+        Ok(format!("ossutil {line}"))
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -357,19 +378,33 @@ fn cap_str(text: &str, pattern: &'static str, cell: &'static OnceLock<Regex>) ->
 
 /// `ossutil` progress lines differ between 1.x and 2.x, so every field is
 /// parsed independently and treated as optional.
+///
+/// 1.x: `Total num: 12, size: ... OK num: 3 ... speed: 1.2 MB/s`
+/// 2.x: `Total 2 files, 12 B, 1 dirs, Upload done:(1 objects) failed:(0 objects)`
+///
+/// 2.x 压根不打百分比，所以百分比按文件数自己算。
 fn parse_line(line: &str) -> UploadEvent {
     static PERCENT: OnceLock<Regex> = OnceLock::new();
     static SPEED: OnceLock<Regex> = OnceLock::new();
-    static TOTAL: OnceLock<Regex> = OnceLock::new();
-    static OK: OnceLock<Regex> = OnceLock::new();
+    static TOTAL_1X: OnceLock<Regex> = OnceLock::new();
+    static OK_1X: OnceLock<Regex> = OnceLock::new();
+    static TOTAL_2X: OnceLock<Regex> = OnceLock::new();
+    static OK_2X: OnceLock<Regex> = OnceLock::new();
 
-    let percent = cap_f64(line, r"(\d+(?:\.\d+)?)\s*%", &PERCENT);
-    let speed = cap_str(line, r"(?i)speed:\s*([\d.]+\s*[KMGT]?B/s)", &SPEED);
-    let total_num = cap_u64(line, r"(?i)total\s+num:\s*([\d,]+)", &TOTAL);
-    let ok_num = cap_u64(line, r"(?i)(?:ok|dealt)\s+num:\s*([\d,]+)", &OK);
+    // 1.x 写成 "speed: 1.2 MB/s"，2.x 直接是 "1.2 MiB/s"，所以前缀可有可无。
+    let speed = cap_str(line, r"(?i)([\d.]+\s*[KMGT]?i?B/s)", &SPEED);
+    let total_num = cap_u64(line, r"(?i)total\s+num:\s*([\d,]+)", &TOTAL_1X)
+        .or_else(|| cap_u64(line, r"(?i)total\s+([\d,]+)\s+files?\b", &TOTAL_2X));
+    // 只认 "done:("，别把 "failed:(3 objects)" 当成传好了
+    let ok_num = cap_u64(line, r"(?i)(?:ok|dealt)\s+num:\s*([\d,]+)", &OK_1X)
+        .or_else(|| cap_u64(line, r"(?i)\bdone:\(\s*([\d,]+)\s+objects?", &OK_2X));
 
-    let is_progress =
-        percent.is_some() || speed.is_some() || total_num.is_some() || ok_num.is_some();
+    let percent = cap_f64(line, r"(\d+(?:\.\d+)?)\s*%", &PERCENT).or(match (ok_num, total_num) {
+        (Some(ok), Some(total)) if total > 0 => Some(ok as f64 * 100.0 / total as f64),
+        _ => None,
+    });
+
+    let is_progress = percent.is_some() || speed.is_some() || total_num.is_some();
 
     UploadEvent {
         kind: if is_progress { "progress" } else { "log" },
@@ -430,17 +465,44 @@ fn flush(acc: &mut Vec<u8>, app: &AppHandle) {
 /* credential file                                                     */
 /* ------------------------------------------------------------------ */
 
+/// ossutil 2.x 默认用 v4 签名，v4 强制要求 region，而界面上只让填 endpoint，
+/// 所以从 endpoint 反推。推不出来（自定义域名、传输加速域名）就返回 None，
+/// 调用方会退回 v1 签名。
+fn region_from_endpoint(endpoint: &str) -> Option<String> {
+    static REGION: OnceLock<Regex> = OnceLock::new();
+    re(
+        r"(?i)^oss-([a-z]{2}-[a-z0-9-]+?)(?:-internal)?\.aliyuncs\.com$",
+        &REGION,
+    )
+    .captures(endpoint.trim())
+    .map(|c| c[1].to_lowercase())
+}
+
 fn write_cred_file(app: &AppHandle, req: &UploadRequest) -> Result<PathBuf, String> {
     let path = config_dir(app)?.join("session.ossutilconfig");
-    let body = format!(
-        "[Credentials]\nlanguage=CH\nendpoint={}\naccessKeyID={}\naccessKeySecret={}\n",
-        req.endpoint.trim(),
+    let endpoint = req.endpoint.trim();
+    let mut body = format!(
+        "[default]\nlanguage=CH\naccessKeyID={}\naccessKeySecret={}\n",
         req.access_key_id.trim(),
         req.access_key_secret
     );
+    if !endpoint.is_empty() {
+        body.push_str(&format!("endpoint={endpoint}\n"));
+    }
+    if let Some(region) = region_from_endpoint(endpoint) {
+        body.push_str(&format!("region={region}\n"));
+    }
     std::fs::write(&path, body).map_err(|e| format!("无法写入临时凭证文件: {e}"))?;
     restrict_permissions(&path);
     Ok(path)
+}
+
+/// 凭证 + 签名版本，`cp` 和 `ls` 都要带。
+fn add_auth_args(cmd: &mut Command, cred_file: &Path, endpoint: &str) {
+    cmd.arg("--config-file").arg(cred_file);
+    if region_from_endpoint(endpoint).is_none() {
+        cmd.arg("--sign-version").arg("v1");
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -479,12 +541,14 @@ async fn start_upload(
     cmd.arg("cp")
         .arg("-r") // recurse into the folder
         .arg("-u") // skip objects that are already up to date
-        .arg("-f") // never prompt
-        .arg("--config-file")
-        .arg(&cred_file)
-        .arg("--checkpoint-dir")
+        .arg("-f"); // never prompt
+    add_auth_args(&mut cmd, &cred_file, &req.endpoint);
+    cmd.arg("--checkpoint-dir")
         .arg(&checkpoint)
-        .arg("--jobs")
+        // 2.x 的错误报告默认写到当前工作目录的 ossutil_output/，挪进配置目录
+        .arg("--output-dir")
+        .arg(cfg_dir.join("output"))
+        .arg("-j") // 2.x 把 --jobs 改成了 -j
         .arg(req.jobs.max(1).to_string())
         .arg("--parallel")
         .arg(req.parallel.max(1).to_string())
@@ -634,11 +698,10 @@ async fn verify_upload(app: AppHandle, req: UploadRequest) -> Result<VerifyResul
         .map_err(|e| e.to_string())?;
 
     let cred_file = write_cred_file(&app, &req)?;
-    let output = base_command(&app, &req.ossutil_path)
-        .arg("ls")
-        .arg("-s")
-        .arg("--config-file")
-        .arg(&cred_file)
+    let mut cmd = base_command(&app, &req.ossutil_path);
+    cmd.arg("ls").arg("--short-format"); // 2.x 去掉了 -s 短写法
+    add_auth_args(&mut cmd, &cred_file, &req.endpoint);
+    let output = cmd
         .arg(req.target())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -681,4 +744,69 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_line, region_from_endpoint};
+
+    #[test]
+    fn progress_parsing() {
+        // 2.x 实测输出
+        let e =
+            parse_line("Total 8 files, 12 B, 1 dirs, Upload done:(2 objects) failed:(0 objects)");
+        assert_eq!(e.kind, "progress");
+        assert_eq!(e.total_num, Some(8));
+        assert_eq!(e.ok_num, Some(2));
+        assert_eq!(e.percent, Some(25.0));
+
+        // failed:( 不能被当成 done:(
+        let e = parse_line(
+            "Total 4 files, 12 B, 1 dirs, Upload done:(0 objects) failed:(4 objects, 12 B)",
+        );
+        assert_eq!(e.ok_num, Some(0));
+        assert_eq!(e.percent, Some(0.0));
+
+        // 1.x 输出，百分比和速度用它自己打的
+        let e = parse_line("Total num: 10, size: 100. OK num: 5. 50% speed: 1.2 MB/s");
+        assert_eq!(
+            (e.total_num, e.ok_num, e.percent),
+            (Some(10), Some(5), Some(50.0))
+        );
+        assert_eq!(e.speed.as_deref(), Some("1.2 MB/s"));
+
+        // 2.x 裸速度，没有 "speed:" 前缀
+        assert_eq!(
+            parse_line("copying 3.5 MiB/s").speed.as_deref(),
+            Some("3.5 MiB/s")
+        );
+
+        // 普通日志行不该被当成进度
+        assert_eq!(parse_line("Error: NoSuchBucket").kind, "log");
+    }
+
+    #[test]
+    fn region_derivation() {
+        let r = |e| region_from_endpoint(e);
+        assert_eq!(
+            r("oss-cn-hangzhou.aliyuncs.com").as_deref(),
+            Some("cn-hangzhou")
+        );
+        assert_eq!(
+            r("oss-cn-hangzhou-internal.aliyuncs.com").as_deref(),
+            Some("cn-hangzhou")
+        );
+        assert_eq!(
+            r("oss-ap-southeast-1.aliyuncs.com").as_deref(),
+            Some("ap-southeast-1")
+        );
+        assert_eq!(
+            r(" oss-us-west-1.aliyuncs.com ").as_deref(),
+            Some("us-west-1")
+        );
+        // 推不出 region 的：传输加速、自定义域名、空值 —— 调用方退回 v1 签名
+        assert_eq!(r("oss-accelerate.aliyuncs.com"), None);
+        assert_eq!(r("cdn.example.com"), None);
+        assert_eq!(r(""), None);
+    }
 }

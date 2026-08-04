@@ -48,9 +48,9 @@
           </div>
           <div class="field span2">
             <label for="endpoint">Endpoint</label>
-            <input id="endpoint" type="text" spellcheck="false" list="endpoints" placeholder="oss-cn-hangzhou.aliyuncs.com" />
+            <input id="endpoint" type="text" spellcheck="false" list="endpoints" placeholder="点开选择地域，例如 oss-cn-hangzhou.aliyuncs.com" />
             <datalist id="endpoints"></datalist>
-            <p class="hint">必须和 Bucket 所在地域一致，否则会报 <code>InvalidBucketName</code> / 连不上。内网 Endpoint 只在同地域 ECS 上可用，但速度快很多。</p>
+            <p class="hint">默认留空，点开下拉自己选。必须和 Bucket 所在地域一致，否则会报 <code>InvalidBucketName</code> / 连不上。只列外网 Endpoint（内网 Endpoint 只有同地域 ECS 上能连）。</p>
           </div>
         </div>
         <label class="check">
@@ -69,7 +69,7 @@
         <div class="grid">
           <div class="field">
             <label for="bucket">Bucket</label>
-            <input id="bucket" type="text" spellcheck="false" list="buckets" placeholder="my-dataset-bucket" />
+            <input id="bucket" type="text" spellcheck="false" list="buckets" placeholder="my-dataset-bucket 或直接粘贴 oss:// 路径" />
             <datalist id="buckets"></datalist>
           </div>
           <div class="field">
@@ -77,6 +77,7 @@
             <input id="prefix" type="text" spellcheck="false" placeholder="delivery/2026-08/batch-01" />
           </div>
         </div>
+        <p class="hint">整条路径直接粘进任意一个框就会自动拆开，<code>oss://bucket/a/b</code> 和控制台的 <code>https://bucket.oss-cn-hangzhou.aliyuncs.com/a/b</code> 都认（后者顺带填好 Endpoint）。</p>
         <div class="target-preview" id="targetPreview">oss://<em>bucket</em>/<em>路径</em>/</div>
       </div>
     </section>

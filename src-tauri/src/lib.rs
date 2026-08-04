@@ -215,7 +215,32 @@ fn binary_name() -> &'static str {
     }
 }
 
-/// Resolution order: user override -> bundled resource -> system PATH.
+/// ossutil 直接嵌进 exe，单文件下载即用；首次运行解到缓存目录。
+#[cfg(windows)]
+const EMBEDDED_OSSUTIL: &[u8] = include_bytes!("../binaries/ossutil.exe");
+
+/// 解出内嵌的 ossutil。长度不一致视为旧版本，覆盖重写。
+#[cfg(windows)]
+fn extract_embedded(app: &AppHandle) -> Option<PathBuf> {
+    let dir = app.path().app_cache_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(binary_name());
+    let fresh = std::fs::metadata(&path)
+        .map(|m| m.len() == EMBEDDED_OSSUTIL.len() as u64)
+        .unwrap_or(false);
+    // ponytail: 只比长度，不算哈希——同长度不同内容的 ossutil 不会出现在发布流程里
+    if !fresh {
+        std::fs::write(&path, EMBEDDED_OSSUTIL).ok()?;
+    }
+    Some(path)
+}
+
+#[cfg(not(windows))]
+fn extract_embedded(_app: &AppHandle) -> Option<PathBuf> {
+    None
+}
+
+/// Resolution order: user override -> bundled resource -> embedded copy -> system PATH.
 fn resolve_ossutil(app: &AppHandle, custom: &str) -> PathBuf {
     let custom = custom.trim();
     if !custom.is_empty() {
@@ -226,6 +251,9 @@ fn resolve_ossutil(app: &AppHandle, custom: &str) -> PathBuf {
         if bundled.exists() {
             return bundled;
         }
+    }
+    if let Some(path) = extract_embedded(app) {
+        return path;
     }
     PathBuf::from(binary_name())
 }

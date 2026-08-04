@@ -3,10 +3,23 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>OSS 上传助手</title>
+<title></title>
 <link rel="stylesheet" href="./src/style.css" />
 </head>
 <body>
+<!-- 无边框窗口：系统标题栏（连同它的图标）整条去掉，拖动和窗口按钮自己画 -->
+<div class="titlebar" data-tauri-drag-region>
+  <button type="button" class="winbtn" id="winMin" aria-label="最小化">
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 8h10"/></svg>
+  </button>
+  <button type="button" class="winbtn" id="winMax" aria-label="最大化">
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg>
+  </button>
+  <button type="button" class="winbtn close" id="winClose" aria-label="关闭">
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.3"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+  </button>
+</div>
+
 <div class="app">
 
   <header class="topbar">
@@ -14,14 +27,17 @@
       <div class="logo" aria-hidden="true">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6"/><path d="m6 12 6-6 6 6"/><path d="M4 21h16"/></svg>
       </div>
-      <div class="brand-text">
-        <h1>OSS 上传助手</h1>
-        <p>ossutil 驱动 · 断点续传 · 增量上传</p>
-      </div>
     </div>
-    <div class="engine" id="engineStatus" data-state="checking">
-      <span class="dot"></span>
-      <span id="engineText">正在检测 ossutil…</span>
+    <div class="topbar-right">
+      <div class="identity" id="identity" hidden>
+        <span class="id-ak" id="identityAk"></span>
+        <span class="id-ep" id="identityEndpoint"></span>
+        <button type="button" class="ghost" id="btnLogout">退出</button>
+      </div>
+      <div class="engine" id="engineStatus" data-state="checking">
+        <span class="dot"></span>
+        <span id="engineText">正在检测 ossutil…</span>
+      </div>
     </div>
   </header>
 
@@ -30,54 +46,38 @@
     <section class="card">
       <div class="card-head">
         <span class="step">1</span>
-        <h2>访问凭证</h2>
-        <button type="button" class="ghost" id="toggleCred" aria-expanded="true">收起</button>
+        <h2>Bucket</h2>
+        <button type="button" class="ghost" id="btnRefreshBuckets">刷新</button>
       </div>
-      <div class="card-body" id="credBody">
-        <div class="grid">
-          <div class="field">
-            <label for="ak">AccessKey ID</label>
-            <input id="ak" type="text" spellcheck="false" autocomplete="off" placeholder="LTAI5t…" />
-          </div>
-          <div class="field">
-            <label for="sk">AccessKey Secret</label>
-            <div class="input-affix">
-              <input id="sk" type="password" spellcheck="false" autocomplete="off" placeholder="••••••••••••••••" />
-              <button type="button" class="affix-btn" id="toggleSk" title="显示 / 隐藏">显示</button>
-            </div>
-          </div>
-          <div class="field span2">
-            <label for="endpoint">Endpoint</label>
-            <input id="endpoint" type="text" spellcheck="false" list="endpoints" placeholder="点开选择地域，例如 oss-cn-hangzhou.aliyuncs.com" />
-            <datalist id="endpoints"></datalist>
-            <p class="hint">默认留空，点开下拉自己选。必须和 Bucket 所在地域一致，否则会报 <code>InvalidBucketName</code> / 连不上。只列外网 Endpoint（内网 Endpoint 只有同地域 ECS 上能连）。</p>
-          </div>
+      <div class="card-body">
+        <div class="bucketlist" id="bucketList" aria-label="Bucket 列表">
+          <p class="bucket-empty">尚未连接</p>
         </div>
-        <label class="check">
-          <input id="remember" type="checkbox" />
-          <span>记住凭证（保存在本机用户配置目录）</span>
-        </label>
       </div>
     </section>
 
-    <section class="card">
+    <section class="card browser">
       <div class="card-head">
         <span class="step">2</span>
-        <h2>上传目标</h2>
+        <h2>浏览</h2>
+        <button type="button" class="ghost" id="btnRefreshList">刷新</button>
       </div>
       <div class="card-body">
-        <div class="grid">
-          <div class="field">
-            <label for="bucket">Bucket</label>
-            <input id="bucket" type="text" spellcheck="false" list="buckets" placeholder="my-dataset-bucket 或直接粘贴 oss:// 路径" />
-            <datalist id="buckets"></datalist>
-          </div>
-          <div class="field">
-            <label for="prefix">目标路径</label>
-            <input id="prefix" type="text" spellcheck="false" placeholder="delivery/2026-08/batch-01" />
-          </div>
+        <div class="addrbar">
+          <button type="button" class="iconbtn" id="btnUp" title="上一级" aria-label="上一级">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+          </button>
+          <input id="addr" type="text" spellcheck="false" autocomplete="off"
+                 placeholder="oss://bucket/路径/ —— 也可以直接粘控制台的 https 链接" />
         </div>
-        <p class="hint">整条路径直接粘进任意一个框就会自动拆开，<code>oss://bucket/a/b</code> 和控制台的 <code>https://bucket.oss-cn-hangzhou.aliyuncs.com/a/b</code> 都认（后者顺带填好 Endpoint）。</p>
+        <!-- 上传/配置/校验那套代码读的还是这两个，导航只负责往里写 -->
+        <input id="bucket" type="hidden" />
+        <input id="prefix" type="hidden" />
+        <datalist id="buckets"></datalist>
+
+        <div class="filelist" id="fileList" aria-label="对象列表">
+          <p class="file-empty">先选一个 Bucket</p>
+        </div>
         <div class="target-preview" id="targetPreview">oss://<em>bucket</em>/<em>路径</em>/</div>
       </div>
     </section>
@@ -166,6 +166,47 @@
   </section>
 
   <div class="toast" id="toast" hidden></div>
+</div>
+
+<div class="gate" id="gate">
+  <form class="gate-card" id="gateForm" autocomplete="off">
+    <div class="gate-head">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6"/><path d="m6 12 6-6 6 6"/><path d="M4 21h16"/></svg>
+      </div>
+      <h2>连接到 OSS</h2>
+      <p>填入 AccessKey 和地域，验证通过后才会列出 Bucket。</p>
+    </div>
+
+    <div class="field">
+      <label for="ak">AccessKey ID</label>
+      <input id="ak" type="text" spellcheck="false" autocomplete="off" placeholder="LTAI5t…" />
+    </div>
+
+    <div class="field">
+      <label for="sk">AccessKey Secret</label>
+      <div class="input-affix">
+        <input id="sk" type="password" spellcheck="false" autocomplete="off" placeholder="••••••••••••••••" />
+        <button type="button" class="affix-btn" id="toggleSk" title="显示 / 隐藏">显示</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="endpoint">Endpoint</label>
+      <input id="endpoint" type="text" spellcheck="false" list="endpoints" placeholder="点开选择地域，例如 oss-cn-hangzhou.aliyuncs.com" />
+      <datalist id="endpoints"></datalist>
+      <p class="hint">点开下拉选地域。只列外网 Endpoint —— 内网 Endpoint 只有同地域 ECS 上能连。</p>
+    </div>
+
+    <label class="check">
+      <input id="remember" type="checkbox" />
+      <span>记住凭证（保存在本机用户配置目录）</span>
+    </label>
+
+    <p class="gate-error" id="gateError" hidden></p>
+
+    <button type="submit" class="primary gate-submit" id="btnLogin">连接</button>
+  </form>
 </div>
 
 <script type="module" src="./src/main.js"></script>

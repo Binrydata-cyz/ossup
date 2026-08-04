@@ -506,13 +506,13 @@ fn region_from_endpoint(endpoint: &str) -> Option<String> {
     .map(|c| c[1].to_lowercase())
 }
 
-fn write_cred_file(app: &AppHandle, req: &UploadRequest) -> Result<PathBuf, String> {
+fn write_cred_file(app: &AppHandle, ak: &str, sk: &str, endpoint: &str) -> Result<PathBuf, String> {
     let path = config_dir(app)?.join("session.ossutilconfig");
-    let endpoint = req.endpoint.trim();
+    let endpoint = endpoint.trim();
     let mut body = format!(
         "[default]\nlanguage=CH\naccessKeyID={}\naccessKeySecret={}\n",
-        req.access_key_id.trim(),
-        req.access_key_secret
+        ak.trim(),
+        sk
     );
     if !endpoint.is_empty() {
         body.push_str(&format!("endpoint={endpoint}\n"));
@@ -530,6 +530,89 @@ fn add_auth_args(cmd: &mut Command, cred_file: &Path, endpoint: &str) {
     cmd.arg("--config-file").arg(cred_file);
     if region_from_endpoint(endpoint).is_none() {
         cmd.arg("--sign-version").arg("v1");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* OSS REST API passthrough                                            */
+/* ------------------------------------------------------------------ */
+
+/// 登录态所需的最小信息。上传/校验用的 `UploadRequest` 是它的超集。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Auth {
+    pub access_key_id: String,
+    pub access_key_secret: String,
+    pub endpoint: String,
+    #[serde(default)]
+    pub ossutil_path: String,
+}
+
+/// `ossutil api <op> [args] --output-format json` 的透传。
+///
+/// ossutil 的 `api` 子命令覆盖了 OSS 全部 REST API，所以浏览、删除、改名、ACL
+/// 这些都不需要各写一个 command——换个 `op` 就行。
+/// ponytail: 前端能调任意 op。这是本地桌面应用，webview 里跑的就是本仓库的
+/// 代码，不是信任边界；真要收紧就在这里加一张 op 白名单。
+#[tauri::command]
+async fn oss_api(
+    app: AppHandle,
+    auth: Auth,
+    op: String,
+    args: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    let cred_file = write_cred_file(
+        &app,
+        &auth.access_key_id,
+        &auth.access_key_secret,
+        &auth.endpoint,
+    )?;
+
+    let mut cmd = base_command(&app, &auth.ossutil_path);
+    cmd.arg("api").arg(&op);
+    add_auth_args(&mut cmd, &cred_file, &auth.endpoint);
+    cmd.args(&args).arg("--output-format").arg("json");
+
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("无法启动 ossutil: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // ossutil 的服务端错误是多行的（Error Code / Message / Request Id），
+        // 只取第一行会把最有用的 InvalidAccessKeyId 丢掉，所以整段透出，
+        // 只滤掉每次都跟在末尾的 "0.147220(s) elapsed"。
+        let msg = stderr
+            .lines()
+            .chain(stdout.lines())
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.ends_with("(s) elapsed"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(if msg.is_empty() {
+            format!("ossutil {op} 执行失败")
+        } else {
+            msg
+        });
+    }
+
+    parse_api_output(&stdout)
+}
+
+/// ossutil 在 JSON 后面还会追加一行 `0.976553(s) elapsed`，直接 `from_str` 会报
+/// trailing characters。用 StreamDeserializer 只吃第一个值，后面的原样丢掉。
+/// 顺带覆盖了 delete-object 这类成功时不吐 body 的 op —— 没有值就是 Null。
+fn parse_api_output(stdout: &str) -> Result<serde_json::Value, String> {
+    let mut stream = serde_json::Deserializer::from_str(stdout).into_iter::<serde_json::Value>();
+    match stream.next() {
+        Some(Ok(value)) => Ok(value),
+        Some(Err(e)) => Err(format!("解析 ossutil 输出失败: {e}\n{stdout}")),
+        None => Ok(serde_json::Value::Null),
     }
 }
 
@@ -560,7 +643,7 @@ async fn start_upload(
     let cfg_dir = config_dir(&app)?;
     let checkpoint = cfg_dir.join("checkpoints");
     std::fs::create_dir_all(&checkpoint).map_err(|e| e.to_string())?;
-    let cred_file = write_cred_file(&app, &req)?;
+    let cred_file = write_cred_file(&app, &req.access_key_id, &req.access_key_secret, &req.endpoint)?;
 
     let part_bytes = req.part_size_mb.max(1) * 1024 * 1024;
     let target = req.target();
@@ -725,7 +808,7 @@ async fn verify_upload(app: AppHandle, req: UploadRequest) -> Result<VerifyResul
         .await
         .map_err(|e| e.to_string())?;
 
-    let cred_file = write_cred_file(&app, &req)?;
+    let cred_file = write_cred_file(&app, &req.access_key_id, &req.access_key_secret, &req.endpoint)?;
     let mut cmd = base_command(&app, &req.ossutil_path);
     cmd.arg("ls").arg("--short-format"); // 2.x 去掉了 -s 短写法
     add_auth_args(&mut cmd, &cred_file, &req.endpoint);
@@ -766,6 +849,7 @@ pub fn run() {
             load_config,
             save_config,
             check_ossutil,
+            oss_api,
             start_upload,
             cancel_upload,
             verify_upload,
@@ -776,7 +860,26 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_line, region_from_endpoint};
+    use super::{parse_api_output, parse_line, region_from_endpoint};
+
+    /// ossutil 真实输出的形状：JSON 之后跟一个空行 + 计时行。
+    #[test]
+    fn api_output_ignores_trailing_elapsed_line() {
+        let raw = "{\"Buckets\":{\"Bucket\":[]},\"IsTruncated\":\"true\"}\n\n0.976553(s) elapsed\n";
+        let value = parse_api_output(raw).expect("尾部计时行不该让解析失败");
+        assert_eq!(value["IsTruncated"], "true");
+    }
+
+    #[test]
+    fn api_output_empty_is_null() {
+        assert!(parse_api_output("").unwrap().is_null());
+    }
+
+    #[test]
+    fn api_output_broken_json_still_errors() {
+        assert!(parse_api_output("{not json").is_err());
+    }
+
 
     #[test]
     fn progress_parsing() {

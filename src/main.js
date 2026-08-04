@@ -1,7 +1,18 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { open } from "@tauri-apps/plugin-dialog"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+import { message, open } from "@tauri-apps/plugin-dialog"
+
+import { endpointOf, nextMarker, pickBuckets } from "./buckets.js"
+import { iconFor } from "./fileicon.js"
+import {
+	formatSize,
+	formatTime,
+	kindOf,
+	nextToken,
+	pickObjects,
+} from "./objects.js"
 
 const $ = (id) => document.getElementById(id)
 
@@ -35,6 +46,20 @@ const ui = {
 	logpanel: $("logpanel"),
 	log: $("log"),
 	toast: $("toast"),
+	gate: $("gate"),
+	gateForm: $("gateForm"),
+	gateError: $("gateError"),
+	btnLogin: $("btnLogin"),
+	btnLogout: $("btnLogout"),
+	identity: $("identity"),
+	identityAk: $("identityAk"),
+	identityEndpoint: $("identityEndpoint"),
+	bucketList: $("bucketList"),
+	btnRefreshBuckets: $("btnRefreshBuckets"),
+	addr: $("addr"),
+	btnUp: $("btnUp"),
+	btnRefreshList: $("btnRefreshList"),
+	fileList: $("fileList"),
 }
 
 const state = {
@@ -43,6 +68,9 @@ const state = {
 	startedAt: 0,
 	timer: null,
 	toastTimer: null,
+	connected: false,
+	bucket: "",
+	prefix: "",
 }
 
 /* ------------------------------------------------------------------ */
@@ -184,17 +212,6 @@ function updateTargetPreview() {
 	ui.targetPreview.classList.add("ready")
 }
 
-function absorbOssUri(event) {
-	const parsed = parseOssUri(event.target.value)
-	if (parsed) {
-		ui.bucket.value = parsed.bucket
-		ui.prefix.value = cleanPrefix(parsed.prefix)
-		if (parsed.endpoint) ui.endpoint.value = normalizeEndpoint(parsed.endpoint)
-		toast(`已识别 oss://${parsed.bucket}/${cleanPrefix(parsed.prefix)}`, "success")
-	}
-	updateTargetPreview()
-}
-
 function setLocalPath(path) {
 	state.localPath = path || ""
 	if (state.localPath) {
@@ -272,6 +289,308 @@ async function checkEngine() {
 		ui.engine.dataset.state = "error"
 		ui.engineText.textContent = "未找到 ossutil"
 		appendLog(`[engine] ${err}`)
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* 连接 + Bucket                                                        */
+/* ------------------------------------------------------------------ */
+
+/* oss_api 只要这四个字段，别把整个 UploadRequest 传过去 */
+function auth() {
+	return {
+		accessKeyId: ui.ak.value.trim(),
+		accessKeySecret: ui.sk.value,
+		endpoint: normalizeEndpoint(ui.endpoint.value),
+		ossutilPath: ui.ossutilPath.value.trim(),
+	}
+}
+
+const ossApi = (op, args = []) => invoke("oss_api", { auth: auth(), op, args })
+
+/* 名字和地域都是服务端给的，一律走 textContent，不拼 innerHTML */
+function renderBuckets(buckets) {
+	const datalist = $("buckets")
+	datalist.replaceChildren(
+		...buckets.map((b) => {
+			const option = document.createElement("option")
+			option.value = b.name
+			return option
+		}),
+	)
+
+	if (!buckets.length) {
+		ui.bucketList.replaceChildren(
+			Object.assign(document.createElement("p"), {
+				className: "bucket-empty",
+				textContent: "这个账号下没有 Bucket",
+			}),
+		)
+		return
+	}
+
+	ui.bucketList.replaceChildren(
+		...buckets.map((b) => {
+			const el = document.createElement("button")
+			el.type = "button"
+			el.className = "bucket"
+			const icon = document.createElement("img")
+			icon.src = iconFor("bucket")
+			icon.alt = ""
+			const text = document.createElement("span")
+			text.className = "bucket-text"
+			const name = document.createElement("span")
+			name.className = "bucket-name"
+			name.textContent = b.name
+			const meta = document.createElement("span")
+			meta.className = "bucket-meta"
+			meta.textContent = [b.location, b.storageClass].filter(Boolean).join(" · ")
+			text.append(name, meta)
+			el.append(icon, text)
+			el.addEventListener("click", () => navigate(b.name, "", b))
+			return el
+		}),
+	)
+	highlightBucket()
+}
+
+function highlightBucket() {
+	const current = ui.bucket.value.trim()
+	ui.bucketList.querySelectorAll(".bucket").forEach((el) => {
+		el.classList.toggle(
+			"active",
+			el.querySelector(".bucket-name").textContent === current,
+		)
+	})
+}
+
+async function loadBuckets() {
+	ui.bucketList.innerHTML = `<p class="bucket-empty">正在读取 Bucket…</p>`
+	/* 一次最多 1000 个，Bucket 多的账号必须跟着 NextMarker 翻页，
+	   否则只看得到第一页。页数封顶纯粹是防服务端一直说 truncated 死循环。 */
+	const buckets = []
+	let marker = ""
+	let last = null
+	for (let page = 0; page < 50; page++) {
+		const args = ["--max-keys", "1000"]
+		if (marker) args.push("--marker", marker)
+		last = await ossApi("list-buckets", args)
+		buckets.push(...pickBuckets(last))
+		marker = nextMarker(last)
+		if (!marker) break
+	}
+
+	/* 调用成功却一个都没认出来 = JSON 结构和预期不符，别静默显示"没有 Bucket" */
+	if (!buckets.length && last) {
+		appendLog(
+			`[buckets] 没能从返回里认出 Bucket，原始 JSON:\n${JSON.stringify(last, null, 2)}`,
+		)
+	}
+	renderBuckets(buckets)
+	return buckets
+}
+
+/* ------------------------------------------------------------------ */
+/* 浏览                                                                 */
+/* ------------------------------------------------------------------ */
+
+function setFileStatus(text) {
+	ui.fileList.replaceChildren(
+		Object.assign(document.createElement("p"), {
+			className: "file-empty",
+			textContent: text,
+		}),
+	)
+}
+
+function renderObjects(items) {
+	if (!items.length) {
+		setFileStatus("这个目录是空的")
+		return
+	}
+	ui.fileList.replaceChildren(
+		...items.map((o) => {
+			const row = document.createElement("div")
+			row.className = o.folder ? "filerow folder" : "filerow"
+
+			const icon = document.createElement("img")
+			icon.src = iconFor(o.folder ? "folder" : kindOf(o.name))
+			icon.alt = ""
+
+			const name = document.createElement("span")
+			name.className = "file-name"
+			name.textContent = o.name
+
+			const size = document.createElement("span")
+			size.className = "file-size"
+			size.textContent = o.folder ? "" : formatSize(o.size)
+
+			const time = document.createElement("span")
+			time.className = "file-time"
+			time.textContent = o.folder ? "" : formatTime(o.modified)
+
+			row.append(icon, name, size, time)
+			if (o.folder) {
+				row.tabIndex = 0
+				row.addEventListener("click", () => navigate(state.bucket, o.key))
+				row.addEventListener("keydown", (event) => {
+					if (event.key === "Enter") navigate(state.bucket, o.key)
+				})
+			}
+			return row
+		}),
+	)
+}
+
+/* 列当前目录这一层：--delimiter / 让 OSS 把下级目录折叠成 CommonPrefixes，
+   不然会把整个 bucket 的对象全拉下来。 */
+async function listObjects() {
+	if (!state.bucket) {
+		setFileStatus("先选一个 Bucket")
+		return
+	}
+	setFileStatus("正在读取…")
+
+	const prefix = state.prefix ? `${state.prefix}/` : ""
+	const items = []
+	let token = ""
+	let last = null
+	try {
+		for (let page = 0; page < 100; page++) {
+			const args = [
+				"--bucket", state.bucket,
+				"--delimiter", "/",
+				"--max-keys", "1000",
+			]
+			if (prefix) args.push("--prefix", prefix)
+			if (token) args.push("--continuation-token", token)
+			last = await ossApi("list-objects-v2", args)
+			items.push(...pickObjects(last, prefix))
+			token = nextToken(last)
+			if (!token) break
+		}
+	} catch (err) {
+		setFileStatus(String(err))
+		appendLog(`[list] ${err}`)
+		return
+	}
+
+	/* 有返回却一条都没认出来 = JSON 结构和预期不符，别静默显示"空目录" */
+	if (!items.length && last && (last.Contents || last.CommonPrefixes)) {
+		appendLog(`[list] 没能认出对象，原始 JSON:\n${JSON.stringify(last, null, 2)}`)
+	}
+	renderObjects(items)
+}
+
+/* 导航是唯一改当前位置的地方：写隐藏的 #bucket/#prefix（上传那套读的就是它们）、
+   刷新地址栏、重列目录。bucket 带 endpoint 信息时顺便切地域。 */
+function navigate(bucket, prefixWithSlash = "", bucketInfo = null) {
+	state.bucket = bucket
+	state.prefix = cleanPrefix(prefixWithSlash)
+	ui.bucket.value = state.bucket
+	ui.prefix.value = state.prefix
+
+	if (bucketInfo) {
+		const endpoint = endpointOf(bucketInfo)
+		if (endpoint && endpoint !== normalizeEndpoint(ui.endpoint.value)) {
+			ui.endpoint.value = endpoint
+			ui.identityEndpoint.textContent = endpoint
+			toast(`已切到 ${bucketInfo.location}`, "success")
+		}
+	}
+
+	ui.addr.value = state.bucket
+		? `oss://${state.bucket}/${state.prefix ? state.prefix + "/" : ""}`
+		: ""
+	ui.btnUp.disabled = !state.bucket
+	highlightBucket()
+	updateTargetPreview()
+	saveConfig()
+	listObjects()
+}
+
+/* 上一级：有前缀就退一层，已经在根目录就退回"没选 bucket" */
+function goUp() {
+	if (state.prefix) {
+		const parts = state.prefix.split("/")
+		parts.pop()
+		navigate(state.bucket, parts.join("/"))
+	} else if (state.bucket) {
+		navigate("", "")
+		setFileStatus("先选一个 Bucket")
+	}
+}
+
+/* 地址栏支持直接粘 oss:// 或控制台的 https 链接 */
+function gotoAddr() {
+	const parsed = parseOssUri(ui.addr.value)
+	if (!parsed) {
+		toast("认不出这条路径，格式是 oss://bucket/路径/", "error")
+		return
+	}
+	if (parsed.endpoint) ui.endpoint.value = normalizeEndpoint(parsed.endpoint)
+	navigate(parsed.bucket, parsed.prefix)
+}
+
+function setConnected(connected) {
+	state.connected = connected
+	ui.gate.hidden = connected
+	ui.identity.hidden = !connected
+	if (connected) {
+		const ak = ui.ak.value.trim()
+		ui.identityAk.textContent =
+			ak.length > 10 ? `${ak.slice(0, 6)}…${ak.slice(-4)}` : ak
+		ui.identityEndpoint.textContent = normalizeEndpoint(ui.endpoint.value)
+	}
+}
+
+/* 形参别叫 message —— 会盖掉 plugin-dialog 那个弹窗函数 */
+function gateError(text) {
+	ui.gateError.textContent = text
+	ui.gateError.hidden = !text
+}
+
+/* 连接 = 真跑一次 list-buckets。既验证了凭证，又顺手把列表拿回来了。 */
+async function connect() {
+	if (!ui.ak.value.trim()) return gateError("请填写 AccessKey ID")
+	if (!ui.sk.value) return gateError("请填写 AccessKey Secret")
+	if (!normalizeEndpoint(ui.endpoint.value)) return gateError("请选择 Endpoint")
+
+	gateError("")
+	ui.btnLogin.disabled = true
+	ui.btnLogin.textContent = "连接中…"
+	try {
+		const buckets = await loadBuckets()
+		setConnected(true)
+		await saveConfig()
+		toast(`已连接 · ${buckets.length} 个 Bucket`, "success")
+		/* 上次浏览到哪就回到哪；loadConfig 已经把它放进隐藏字段了 */
+		if (ui.bucket.value.trim()) {
+			navigate(ui.bucket.value.trim(), cleanPrefix(ui.prefix.value))
+		}
+	} catch (err) {
+		gateError(String(err))
+		appendLog(`[connect] ${err}`)
+		await message(String(err), { title: "登录失败", kind: "error" })
+	} finally {
+		ui.btnLogin.disabled = false
+		ui.btnLogin.textContent = "连接"
+	}
+}
+
+function disconnect() {
+	setConnected(false)
+	ui.bucketList.innerHTML = `<p class="bucket-empty">尚未连接</p>`
+	$("buckets").innerHTML = ""
+	state.bucket = ""
+	state.prefix = ""
+	ui.addr.value = ""
+	setFileStatus("先选一个 Bucket")
+	gateError("")
+	/* 没勾"记住凭证"就别把密钥留在输入框里 */
+	if (!ui.remember.checked) {
+		ui.ak.value = ""
+		ui.sk.value = ""
 	}
 }
 
@@ -413,12 +732,18 @@ async function runVerify() {
 /* ------------------------------------------------------------------ */
 
 function wire() {
-	$("toggleCred").addEventListener("click", (event) => {
-		const body = $("credBody")
-		const collapsed = body.hidden
-		body.hidden = !collapsed
-		event.target.textContent = collapsed ? "收起" : "展开"
-		event.target.setAttribute("aria-expanded", String(collapsed))
+	ui.gateForm.addEventListener("submit", (event) => {
+		event.preventDefault()
+		connect()
+	})
+	ui.btnLogout.addEventListener("click", disconnect)
+	ui.btnRefreshBuckets.addEventListener("click", async () => {
+		try {
+			await loadBuckets()
+		} catch (err) {
+			toast(String(err), "error")
+			appendLog(`[buckets] ${err}`)
+		}
 	})
 
 	$("toggleSk").addEventListener("click", () => {
@@ -431,9 +756,12 @@ function wire() {
 		ui.endpoint.value = normalizeEndpoint(ui.endpoint.value)
 	})
 
-	/* 两个框都挂：整条路径粘到哪个框里都能拆开 */
-	ui.bucket.addEventListener("input", absorbOssUri)
-	ui.prefix.addEventListener("input", absorbOssUri)
+	ui.btnUp.addEventListener("click", goUp)
+	ui.btnRefreshList.addEventListener("click", listObjects)
+	ui.addr.addEventListener("keydown", (event) => {
+		if (event.key === "Enter") gotoAddr()
+	})
+	ui.addr.addEventListener("change", gotoAddr)
 	ui.ossutilPath.addEventListener("change", checkEngine)
 
 	const pick = async () => {
@@ -468,6 +796,12 @@ function wire() {
 }
 
 async function wireNative() {
+	/* 放在最前面：后面任何一个 await 挂了，窗口都还得关得掉 */
+	const win = getCurrentWindow()
+	$("winMin").addEventListener("click", () => win.minimize())
+	$("winMax").addEventListener("click", () => win.toggleMaximize())
+	$("winClose").addEventListener("click", () => win.close())
+
 	await listen("upload://event", (event) => onUploadEvent(event.payload))
 
 	const webview = getCurrentWebview()
@@ -487,4 +821,12 @@ async function wireNative() {
 fillEndpoints()
 wire()
 wireNative()
-loadConfig().then(checkEngine)
+
+/* 存过凭证就直接连，省掉每次开机点一下"连接" */
+loadConfig()
+	.then(checkEngine)
+	.then(() => {
+		if (ui.ak.value.trim() && ui.sk.value && normalizeEndpoint(ui.endpoint.value)) {
+			connect()
+		}
+	})

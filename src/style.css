@@ -128,19 +128,6 @@ body {
 	box-shadow: 0 3px 10px color-mix(in srgb, var(--blue) 35%, transparent);
 }
 
-.brand-text h1 {
-	margin: 0;
-	font-size: 15px;
-	font-weight: 600;
-	letter-spacing: 0.01em;
-}
-
-.brand-text p {
-	margin: 1px 0 0;
-	font-size: 12px;
-	color: var(--text-2);
-}
-
 .engine {
 	flex: none;
 	display: flex;
@@ -877,4 +864,341 @@ button:disabled {
 		transition: none !important;
 		animation: none !important;
 	}
+}
+
+/* ---------- 连接门 ---------- */
+
+.topbar-right {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.identity {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding: 4px 4px 4px 10px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--canvas);
+	font-size: 12px;
+}
+
+.identity[hidden] {
+	display: none;
+}
+
+.id-ak {
+	font-family: var(--mono);
+	color: var(--text);
+}
+
+.id-ep {
+	color: var(--text-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 200px;
+}
+
+.gate {
+	position: fixed;
+	inset: 0;
+	z-index: 100;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	overflow: auto;
+	background: color-mix(in srgb, var(--soft) 88%, transparent);
+	backdrop-filter: blur(8px);
+}
+
+.gate[hidden] {
+	display: none;
+}
+
+.gate-card {
+	width: 100%;
+	max-width: 420px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 26px;
+	background: var(--canvas);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-pop);
+}
+
+.gate-head {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.gate-head .logo {
+	margin-bottom: 6px;
+}
+
+.gate-head h2 {
+	margin: 0;
+	font-size: 17px;
+}
+
+.gate-head p {
+	margin: 0;
+	color: var(--text-2);
+	font-size: 13px;
+}
+
+.gate-error {
+	margin: 0;
+	padding: 9px 11px;
+	border-radius: var(--radius);
+	background: var(--red-soft);
+	color: var(--red);
+	font-size: 12.5px;
+	word-break: break-word;
+	white-space: pre-line;
+	max-height: 180px;
+	overflow-y: auto;
+}
+
+.gate-error[hidden] {
+	display: none;
+}
+
+.gate-submit {
+	width: 100%;
+	justify-content: center;
+}
+
+/* ---------- bucket 列表 ---------- */
+
+.bucketlist {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 14px;
+	max-height: 168px;
+	overflow-y: auto;
+}
+
+.bucket {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	align-items: flex-start;
+	padding: 7px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--canvas);
+	color: var(--text);
+	font: inherit;
+	cursor: pointer;
+	text-align: left;
+}
+
+.bucket:hover {
+	border-color: var(--blue);
+}
+
+.bucket.active {
+	border-color: var(--blue);
+	background: var(--blue-soft);
+}
+
+.bucket-name {
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.bucket-meta {
+	font-size: 11px;
+	color: var(--text-2);
+}
+
+.bucket-empty {
+	margin: 0;
+	padding: 10px 2px;
+	color: var(--text-2);
+	font-size: 13px;
+}
+
+/* ---------- 自绘标题栏（decorations: false） ---------- */
+
+.titlebar {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 32px;
+	z-index: 1000;
+	display: flex;
+	justify-content: flex-end;
+	background: var(--canvas);
+	border-bottom: 1px solid var(--border);
+	user-select: none;
+}
+
+/* 按钮不能吃掉拖动区域，所以拖动挂在 .titlebar 上、按钮自己排除在外 */
+.winbtn {
+	width: 44px;
+	border: none;
+	background: transparent;
+	color: var(--text-2);
+	display: grid;
+	place-items: center;
+	cursor: pointer;
+	transition: background 0.12s, color 0.12s;
+}
+
+.winbtn:hover {
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.winbtn.close:hover {
+	background: var(--red);
+	color: #fff;
+}
+
+/* 标题栏是 fixed 的，正文和登录门都得给它让出 32px */
+.app {
+	margin-top: 32px;
+	height: calc(100vh - 32px);
+}
+
+.gate {
+	inset: 32px 0 0;
+}
+
+/* ---------- 地址栏 + 文件列表 ---------- */
+
+.addrbar {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.addrbar input {
+	font-family: var(--mono);
+	font-size: 12.5px;
+}
+
+.iconbtn {
+	flex: none;
+	width: 36px;
+	height: 36px;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--canvas);
+	color: var(--text-2);
+	cursor: pointer;
+}
+
+.iconbtn:hover:not(:disabled) {
+	color: var(--text);
+	border-color: color-mix(in srgb, var(--text-2) 35%, var(--border));
+}
+
+.iconbtn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.filelist {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--canvas);
+	min-height: 120px;
+	max-height: 340px;
+	overflow-y: auto;
+}
+
+.filerow {
+	display: grid;
+	grid-template-columns: 20px 1fr auto auto;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 12px;
+	border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.filerow:last-child {
+	border-bottom: none;
+}
+
+.filerow img {
+	width: 20px;
+	height: 20px;
+	display: block;
+}
+
+.filerow.folder {
+	cursor: pointer;
+}
+
+.filerow.folder:hover,
+.filerow.folder:focus-visible {
+	background: var(--blue-soft);
+	outline: none;
+}
+
+.file-name {
+	font-size: 13px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.file-size {
+	font-size: 12px;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+	min-width: 70px;
+	text-align: right;
+}
+
+.file-time {
+	font-size: 12px;
+	color: var(--text-3);
+	font-variant-numeric: tabular-nums;
+	min-width: 110px;
+	text-align: right;
+}
+
+.file-empty {
+	margin: 0;
+	padding: 18px 12px;
+	color: var(--text-2);
+	font-size: 13px;
+	white-space: pre-line;
+}
+
+/* bucket 芯片加了图标，改成横向排 */
+.bucket {
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
+}
+
+.bucket img {
+	width: 20px;
+	height: 20px;
+	display: block;
+	flex: none;
+}
+
+.bucket-text {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 1px;
+	min-width: 0;
 }

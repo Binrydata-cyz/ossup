@@ -12,7 +12,8 @@
   "app": {
     "windows": [
       {
-        "title": "OSS 上传助手",
+        "title": "",
+        "decorations": false,
         "label": "main",
         "width": 960,
         "height": 780,

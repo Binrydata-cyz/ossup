@@ -87,18 +87,20 @@ export function TaskBar() {
 		}
 		const id = newTaskId()
 		const label = localPath.split(/[\\/]/).filter(Boolean).pop() ?? localPath
-		useTransfersStore.getState().start({ id, kind: "upload", label })
 		setOpen(true)
-		try {
-			await invoke("start_upload", {
-				req: uploadReqFor(config, localPath, bucket, prefix),
-				taskId: id,
-			})
-		} catch (err) {
-			useTransfersStore.getState().fail(id, String(err))
-			appendLog(`[upload] ${err}`)
-			showToast(String(err), "error")
-		}
+		/* 入队而不是直接启动：超过并发上限就排队，由 store 放行 */
+		useTransfersStore.getState().enqueue({ id, kind: "upload", label }, async () => {
+			try {
+				await invoke("start_upload", {
+					req: uploadReqFor(config, localPath, bucket, prefix),
+					taskId: id,
+				})
+			} catch (err) {
+				useTransfersStore.getState().fail(id, String(err))
+				appendLog(`[upload] ${err}`)
+				showToast(String(err), "error")
+			}
+		})
 	}
 
 	/* 拖文件夹到窗口 = 传到当前目录。依赖 startUpload 的最新闭包，故不加依赖数组 */

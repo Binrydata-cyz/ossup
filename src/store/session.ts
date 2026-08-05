@@ -6,6 +6,13 @@ import { create } from "zustand"
 import { endpointOf, nextMarker, pickBuckets, type Bucket } from "../lib/buckets.ts"
 import { ossApi, type Auth } from "../lib/ossApi.ts"
 
+export type Account = {
+	name: string
+	accessKeyId: string
+	accessKeySecret: string
+	endpoint: string
+}
+
 export type Config = {
 	accessKeyId: string
 	accessKeySecret: string
@@ -18,6 +25,9 @@ export type Config = {
 	partSizeMb: number
 	ossutilPath: string
 	cliCreds: boolean
+	/** 同时进行的传输任务上限 */
+	maxTasks: number
+	accounts: Account[]
 	buckets: string[]
 }
 
@@ -33,6 +43,8 @@ const DEFAULTS: Config = {
 	partSizeMb: 16,
 	ossutilPath: "",
 	cliCreds: false,
+	maxTasks: 3,
+	accounts: [],
 	buckets: [],
 }
 
@@ -59,6 +71,12 @@ type SessionState = {
 	loadBuckets: () => Promise<Bucket[]>
 	/** 跨地域的 Bucket 必须换 endpoint，否则连不上 */
 	useBucketEndpoint: (bucket: Bucket) => void
+
+	/** 把当前凭证存成一个可切换的账号（同 AK 覆盖，不重复添加） */
+	saveCurrentAsAccount: (name: string) => Promise<void>
+	removeAccount: (accessKeyId: string) => Promise<void>
+	/** 切到另一套凭证并重新连接 */
+	switchAccount: (account: Account) => Promise<void>
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -151,6 +169,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		try {
 			await get().loadBuckets()
 			set({ connected: true })
+			/* 连通过的凭证自动进账号列表，否则"切换账号"永远是个空菜单。
+			   已在列表里的不动，免得把用户起的名字冲掉。 */
+			const c = get().config
+			if (!c.accounts.some((a) => a.accessKeyId === c.accessKeyId.trim())) {
+				await get().saveCurrentAsAccount("")
+			}
 			await get().saveConfig()
 		} finally {
 			set({ connecting: false })
@@ -167,6 +191,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 				? s.config
 				: { ...s.config, accessKeyId: "", accessKeySecret: "" },
 		}))
+	},
+
+	saveCurrentAsAccount: async (name) => {
+		const c = get().config
+		if (!c.accessKeyId.trim() || !c.accessKeySecret) return
+		const entry: Account = {
+			name: name.trim() || c.accessKeyId.trim().slice(0, 8),
+			accessKeyId: c.accessKeyId.trim(),
+			accessKeySecret: c.accessKeySecret,
+			endpoint: normalizeEndpoint(c.endpoint),
+		}
+		/* 同一个 AK 只留一条，改名或换 endpoint 就地更新 */
+		const rest = c.accounts.filter((a) => a.accessKeyId !== entry.accessKeyId)
+		get().setConfig({ accounts: [...rest, entry] })
+		await get().saveConfig()
+	},
+
+	removeAccount: async (accessKeyId) => {
+		get().setConfig({
+			accounts: get().config.accounts.filter((a) => a.accessKeyId !== accessKeyId),
+		})
+		await get().saveConfig()
+	},
+
+	switchAccount: async (account) => {
+		get().setConfig({
+			accessKeyId: account.accessKeyId,
+			accessKeySecret: account.accessKeySecret,
+			endpoint: account.endpoint,
+		})
+		/* 换账号等于换了一整套可见资源，先断干净再连，
+		   否则旧账号的 bucket 列表会残留一瞬间 */
+		set({ connected: false, buckets: [] })
+		await get().connect()
 	},
 
 	useBucketEndpoint: (bucket) => {

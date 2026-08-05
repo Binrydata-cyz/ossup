@@ -2300,3 +2300,68 @@ button svg,
 	width: 0.75rem;
 	height: 0.75rem;
 }
+
+/* ---------- 标题栏账号按钮 ---------- */
+
+.acctbtn {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	height: 1.5rem;
+	max-width: 14rem;
+	padding: 0 var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-2);
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+
+.acctbtn:hover {
+	background: var(--bg-hover);
+	color: var(--text);
+}
+
+.acctbtn span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.acctbtn svg {
+	width: 0.875rem;
+	height: 0.875rem;
+	flex: none;
+}
+
+.acctbtn .caret {
+	width: 0.625rem;
+	height: 0.625rem;
+	opacity: 0.7;
+}
+
+/* 设置弹窗字段之间松一点，四个数字挨太紧会看错行 */
+.modal.settings {
+	max-width: 24rem;
+	gap: var(--space-4);
+}
+
+.modal.settings input[type="number"] {
+	width: 100%;
+	height: 2.25rem;
+	padding: 0 var(--space-3);
+	font: inherit;
+	font-size: var(--text-md);
+	color: var(--text);
+	background: var(--soft);
+	border: var(--border-w) solid var(--border);
+	border-radius: var(--radius-sm);
+	outline: none;
+}
+
+.modal.settings input:focus-visible {
+	background: var(--canvas);
+	border-color: var(--blue);
+	box-shadow: var(--ring);
+}

@@ -11,6 +11,7 @@ import { TitleBar } from "./components/TitleBar.tsx"
 import { Toolbar } from "./components/Toolbar.tsx"
 import { useBreakpoint } from "./lib/hooks.ts"
 import { normalizeEndpoint, useSessionStore } from "./store/session.ts"
+import { setMaxTasks } from "./store/transfers.ts"
 import { useUiStore } from "./store/ui.ts"
 
 export function App() {
@@ -22,6 +23,8 @@ export function App() {
 		const boot = async () => {
 			const session = useSessionStore.getState()
 			await session.loadConfig()
+			/* 队列的并发上限住在模块变量里，配置读回来后要同步过去 */
+			setMaxTasks(useSessionStore.getState().config.maxTasks)
 			await session.checkEngine()
 			const { accessKeyId, accessKeySecret, endpoint } = useSessionStore.getState().config
 			if (accessKeyId.trim() && accessKeySecret && normalizeEndpoint(endpoint)) {

@@ -46,6 +46,33 @@ fn d_part() -> u64 {
     16
 }
 
+fn d_max_tasks() -> u32 {
+    3
+}
+
+/// 一套已保存的账号凭证。多账号切换用。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    /// 用户自己起的名字，比如"生产"、"测试"
+    #[serde(default)]
+    pub name: String,
+    pub access_key_id: String,
+    pub access_key_secret: String,
+    #[serde(default)]
+    pub endpoint: String,
+}
+
+/// 落盘形态。密钥同样只做 base64 —— 是遮眼不是加密，和主凭证一个待遇。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct StoredAccount {
+    name: String,
+    access_key_id: String,
+    access_key_secret_enc: String,
+    endpoint: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfig {
@@ -71,6 +98,13 @@ pub struct ClientConfig {
     pub ossutil_path: String,
     #[serde(default)]
     pub cli_creds: bool,
+    /// 同时进行的传输任务上限。每个任务是一个独立的 ossutil 进程，
+    /// 不限制的话拖十个文件夹就是十个进程一起抢带宽。
+    #[serde(default = "d_max_tasks")]
+    pub max_tasks: u32,
+    /// 已保存的账号，用于快速切换。
+    #[serde(default)]
+    pub accounts: Vec<Account>,
     /// Optional allow-list shown as a dropdown in the UI.
     #[serde(default)]
     pub buckets: Vec<String>,
@@ -91,6 +125,8 @@ impl Default for ClientConfig {
             part_size_mb: d_part(),
             ossutil_path: String::new(),
             cli_creds: false,
+            max_tasks: d_max_tasks(),
+            accounts: Vec::new(),
             buckets: Vec::new(),
         }
     }
@@ -112,6 +148,8 @@ struct StoredConfig {
     part_size_mb: u64,
     ossutil_path: String,
     cli_creds: bool,
+    max_tasks: u32,
+    accounts: Vec<StoredAccount>,
     buckets: Vec<String>,
 }
 
@@ -137,15 +175,9 @@ fn load_config(app: AppHandle) -> Result<ClientConfig, String> {
     let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let stored: StoredConfig = serde_json::from_str(&raw).unwrap_or_default();
 
-    let secret = B64
-        .decode(stored.access_key_secret_enc.as_bytes())
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .unwrap_or_default();
-
     Ok(ClientConfig {
         access_key_id: stored.access_key_id,
-        access_key_secret: secret,
+        access_key_secret: decode_secret(&stored.access_key_secret_enc),
         endpoint: stored.endpoint,
         bucket: stored.bucket,
         prefix: stored.prefix,
@@ -167,8 +199,31 @@ fn load_config(app: AppHandle) -> Result<ClientConfig, String> {
         },
         ossutil_path: stored.ossutil_path,
         cli_creds: stored.cli_creds,
+        max_tasks: if stored.max_tasks == 0 {
+            d_max_tasks()
+        } else {
+            stored.max_tasks
+        },
+        accounts: stored
+            .accounts
+            .into_iter()
+            .map(|a| Account {
+                name: a.name,
+                access_key_id: a.access_key_id,
+                access_key_secret: decode_secret(&a.access_key_secret_enc),
+                endpoint: a.endpoint,
+            })
+            .collect(),
         buckets: stored.buckets,
     })
+}
+
+/// base64 解不开就当空字符串 —— 配置被手改过也不该让整个应用起不来
+fn decode_secret(enc: &str) -> String {
+    B64.decode(enc.as_bytes())
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -186,6 +241,17 @@ fn save_config(app: AppHandle, cfg: ClientConfig) -> Result<(), String> {
         part_size_mb: cfg.part_size_mb,
         ossutil_path: cfg.ossutil_path,
         cli_creds: cfg.cli_creds,
+        max_tasks: cfg.max_tasks,
+        accounts: cfg
+            .accounts
+            .into_iter()
+            .map(|a| StoredAccount {
+                name: a.name,
+                access_key_id: a.access_key_id,
+                access_key_secret_enc: B64.encode(a.access_key_secret.as_bytes()),
+                endpoint: a.endpoint,
+            })
+            .collect(),
         buckets: cfg.buckets,
     };
     let json = serde_json::to_string_pretty(&stored).map_err(|e| e.to_string())?;

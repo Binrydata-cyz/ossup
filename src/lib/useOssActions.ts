@@ -113,21 +113,25 @@ export function useOssActions() {
 			/* 下载不走 run()：它是长任务，进度归状态栏管，
 			   在这里 await 会把 busy 一直卡住、挡掉其它操作 */
 			const id = newTaskId()
-			useTransfersStore.getState().start({ id, kind: "download", label: item.name })
-			try {
-				await download(
-					transferReq(target),
-					uriOf(bucket, item.key),
-					target,
-					item.folder,
-					id,
-				)
-				showToast("下载已开始，进度看底部状态栏", "success")
-			} catch (err) {
-				useTransfersStore.getState().fail(id, String(err))
-				session.appendLog(`[下载] ${err}`)
-				showToast(`下载失败：${friendlyError(err)}`, "error")
-			}
+			useTransfersStore.getState().enqueue(
+				{ id, kind: "download", label: item.name },
+				async () => {
+					try {
+						await download(
+							transferReq(target),
+							uriOf(bucket, item.key),
+							target,
+							item.folder,
+							id,
+						)
+					} catch (err) {
+						useTransfersStore.getState().fail(id, String(err))
+						session.appendLog(`[下载] ${err}`)
+						showToast(`下载失败：${friendlyError(err)}`, "error")
+					}
+				},
+			)
+			showToast("已加入传输队列，进度看底部状态栏", "success")
 		})()
 	}
 

@@ -8,7 +8,7 @@ import { create } from "zustand"
 import { parseSpeed } from "../lib/format.ts"
 
 export type TransferKind = "upload" | "download"
-export type TransferPhase = "running" | "done" | "error"
+export type TransferPhase = "queued" | "running" | "done" | "error"
 
 export type Transfer = {
 	id: string
@@ -33,13 +33,24 @@ const KEEP_FINISHED_MS = 8000
 /* 采样点不进 store：每秒要写好几次，进了会白白触发重渲染 */
 const samples = new Map<string, { t: number; v: number }[]>()
 
+/* 排队中任务的启动器。每个任务对应一个 ossutil 进程，不排队的话
+   拖十个文件夹就是十个进程一起抢带宽，反而都慢。 */
+const launchers = new Map<string, () => Promise<void>>()
+
+let maxTasks = 3
+export const setMaxTasks = (n: number) => {
+	maxTasks = Math.max(1, Math.floor(n) || 1)
+}
+
 type State = {
 	items: Transfer[]
-	start: (t: Pick<Transfer, "id" | "kind" | "label">) => void
+	/** 入队。名额够就立刻 launch()，否则挂起等前面的跑完 */
+	enqueue: (t: Pick<Transfer, "id" | "kind" | "label">, launch: () => Promise<void>) => void
 	progress: (
 		id: string,
 		patch: { percent?: number | null; files?: number | null; speed?: string | null },
 	) => void
+	pump: () => void
 	finish: (id: string, code: number | null) => void
 	fail: (id: string, note: string) => void
 	remove: (id: string) => void
@@ -49,8 +60,9 @@ type State = {
 export const useTransfersStore = create<State>((set, get) => ({
 	items: [],
 
-	start: ({ id, kind, label }) => {
+	enqueue: ({ id, kind, label }, launch) => {
 		samples.delete(id)
+		launchers.set(id, launch)
 		set((s) => ({
 			items: [
 				...s.items.filter((t) => t.id !== id),
@@ -58,7 +70,7 @@ export const useTransfersStore = create<State>((set, get) => ({
 					id,
 					kind,
 					label,
-					phase: "running",
+					phase: "queued",
 					percent: 0,
 					files: null,
 					speed: null,
@@ -67,6 +79,28 @@ export const useTransfersStore = create<State>((set, get) => ({
 				},
 			],
 		}))
+		get().pump()
+	},
+
+	/** 有空位就把排队中的任务依次放行 */
+	pump: () => {
+		const items = get().items
+		let free = maxTasks - items.filter((t) => t.phase === "running").length
+		if (free <= 0) return
+		for (const t of items) {
+			if (free <= 0) break
+			if (t.phase !== "queued") continue
+			const launch = launchers.get(t.id)
+			if (!launch) continue
+			launchers.delete(t.id)
+			free--
+			set((s) => ({
+				items: s.items.map((x) =>
+					x.id === t.id ? { ...x, phase: "running", startedAt: Date.now() } : x,
+				),
+			}))
+			void launch().catch((err) => get().fail(t.id, String(err)))
+		}
 	},
 
 	progress: (id, patch) => {
@@ -111,6 +145,7 @@ export const useTransfersStore = create<State>((set, get) => ({
 					: t,
 			),
 		}))
+		get().pump()
 		/* 结果停留一会儿再消失，不然任务一结束整行就凭空没了 */
 		setTimeout(() => {
 			if (get().items.find((t) => t.id === id)?.phase !== "running") get().remove(id)
@@ -119,14 +154,18 @@ export const useTransfersStore = create<State>((set, get) => ({
 
 	fail: (id, note) => {
 		samples.delete(id)
+		launchers.delete(id)
 		set((s) => ({
 			items: s.items.map((t) => (t.id === id ? { ...t, phase: "error", note } : t)),
 		}))
+		get().pump()
 	},
 
 	remove: (id) => {
 		samples.delete(id)
+		launchers.delete(id)
 		set((s) => ({ items: s.items.filter((t) => t.id !== id) }))
+		get().pump()
 	},
 
 	clearFinished: () =>
@@ -155,7 +194,12 @@ export function summarize(items: Transfer[]): string {
 	if (!live.length) return ""
 	const up = live.filter((t) => t.kind === "upload").length
 	const down = live.length - up
-	return [up && `正在上传 ${up} 个任务`, down && `正在下载 ${down} 个任务`]
+	const queued = items.filter((t) => t.phase === "queued").length
+	return [
+		up && `正在上传 ${up} 个任务`,
+		down && `正在下载 ${down} 个任务`,
+		queued && `${queued} 个排队中`,
+	]
 		.filter(Boolean)
 		.join(" · ")
 }

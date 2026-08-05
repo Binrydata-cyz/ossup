@@ -111,8 +111,10 @@ export function useOssActions() {
 			await run(
 				"下载",
 				async () => {
+					/* 上传和下载共用一条事件流，状态栏靠这个标记写对文案 */
+					useUiStore.getState().setTransferKind("download")
 					await download(transferReq(target), uriOf(bucket, item.key), target)
-					showToast("下载已开始，进度看底部任务栏", "success")
+					showToast("下载已开始，进度看底部状态栏", "success")
 				},
 				false,
 			)

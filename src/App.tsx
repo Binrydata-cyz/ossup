@@ -46,9 +46,11 @@ export function App() {
 					<Toolbar />
 					<FileTable />
 					<Pager />
-					<TaskBar />
 				</div>
 			</div>
+
+			{/* 状态栏贴窗口底部、跨整幅宽度，不缩在右半边 */}
+			<TaskBar />
 
 			{/* 连上后停在 oss://（Bucket 列表），由用户自己挑，不自动跳回上次位置 */}
 			{!connected && <Gate onConnected={() => {}} />}

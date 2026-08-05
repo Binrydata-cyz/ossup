@@ -1,12 +1,17 @@
-/* 底部可折叠任务栏。复用后端已有的 start_upload / cancel_upload / verify_upload
-   和 upload://event 事件流，一行 Rust 都没改。 */
+/* 窗口底部状态栏。进度不是"栏里放了一根条"，而是整条栏本身从左往右被蓝色浸染，
+   浸染长度 = 进度百分比（见 style.css 里 .statusbar 的 --fill）。
+   点一下从上方滑出明细面板，只有两行。
+
+   后端复用现成的 start_upload / start_download / cancel_upload 和 upload://event，
+   一行 Rust 都没改。 */
 
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { open } from "@tauri-apps/plugin-dialog"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
+import { formatSpeed, parseSpeed } from "../lib/format.ts"
 import { splitPath, useExplorerStore } from "../store/explorer.ts"
 import { useSessionStore } from "../store/session.ts"
 import { useUiStore } from "../store/ui.ts"
@@ -22,74 +27,77 @@ type UploadEvent = {
 	code?: number | null
 }
 
+type Phase = "idle" | "running" | "done" | "error"
+
 type Task = {
-	running: boolean
-	phase: string
-	tone: "" | "done" | "error"
+	phase: Phase
 	percent: number
-	speed: string
-	files: string
-	localPath: string
-	startedAt: number
+	files: number | null
+	note: string
 }
 
-const IDLE: Task = {
-	running: false,
-	phase: "进度",
-	tone: "",
-	percent: 0,
-	speed: "—",
-	files: "—",
-	localPath: "",
-	startedAt: 0,
-}
+const IDLE: Task = { phase: "idle", percent: 0, files: null, note: "" }
+
+/** 速度滑动平均的窗口。瞬时值抖得太厉害，看着像网络不稳。 */
+const SPEED_WINDOW_MS = 3000
 
 export function TaskBar() {
-	const [open_, setOpen] = useState(true)
+	const [open_, setOpen] = useState(false)
 	const [task, setTask] = useState<Task>(IDLE)
-	const [elapsed, setElapsed] = useState(0)
+	const [speed, setSpeed] = useState<number | null>(null)
+
+	/* 采样点放 ref 不放 state：它每秒被写好几次，进 state 会白白触发重渲染 */
+	const samples = useRef<{ t: number; v: number }[]>([])
 
 	const currentPath = useExplorerStore((s) => s.currentPath)
 	const refresh = useExplorerStore((s) => s.refresh)
 	const { config, appendLog } = useSessionStore()
 	const showToast = useUiStore((s) => s.showToast)
-
-	useEffect(() => {
-		if (!task.running) return
-		const t = setInterval(() => setElapsed(Math.floor((Date.now() - task.startedAt) / 1000)), 1000)
-		return () => clearInterval(t)
-	}, [task.running, task.startedAt])
+	const transferKind = useUiStore((s) => s.transferKind)
+	const setTransferKind = useUiStore((s) => s.setTransferKind)
 
 	useEffect(() => {
 		const unlisten = listen<UploadEvent>("upload://event", ({ payload }) => {
 			if (payload.line) appendLog(payload.line)
+
+			if (payload.speed) {
+				const v = parseSpeed(payload.speed)
+				if (v !== null) {
+					const now = Date.now()
+					samples.current.push({ t: now, v })
+					samples.current = samples.current.filter((s) => now - s.t <= SPEED_WINDOW_MS)
+					const sum = samples.current.reduce((a, s) => a + s.v, 0)
+					setSpeed(sum / samples.current.length)
+				}
+			}
+
 			setTask((t) => ({
 				...t,
 				percent: payload.percent ?? t.percent,
-				speed: payload.speed ?? t.speed,
-				files:
-					payload.okNum != null ? `${payload.okNum} / ${payload.totalNum ?? "?"}` : t.files,
+				files: payload.totalNum ?? t.files,
 			}))
 
 			if (payload.kind === "finished") {
 				const ok = payload.code === 0
+				samples.current = []
+				setSpeed(null)
 				setTask((t) => ({
 					...t,
-					running: false,
+					phase: ok ? "done" : "error",
 					percent: ok ? 100 : t.percent,
-					phase: ok ? "上传完成" : `上传中断（退出码 ${payload.code}）`,
-					tone: ok ? "done" : "error",
+					note: ok ? "已完成" : `已中断（退出码 ${payload.code}）`,
 				}))
 				if (ok) {
-					showToast("上传完成", "success")
-					/* 刚传完东西，缓存里的列表已经过期 */
+					showToast("传输完成", "success")
+					/* 刚动过文件，缓存里的列表已经过期 */
 					void refresh()
 				} else {
-					showToast("上传未完成，再传一次即可续传", "error")
+					showToast("传输未完成，再传一次即可续传", "error")
 				}
 			}
+
 			if (payload.kind === "error") {
-				setTask((t) => ({ ...t, running: false, phase: "出错了", tone: "error" }))
+				setTask((t) => ({ ...t, phase: "error", note: "出错了" }))
 			}
 		})
 		return () => {
@@ -115,15 +123,11 @@ export function TaskBar() {
 			showToast("先进入一个 Bucket 再上传", "error")
 			return
 		}
+		samples.current = []
+		setSpeed(null)
+		setTransferKind("upload")
+		setTask({ phase: "running", percent: 0, files: null, note: "" })
 		setOpen(true)
-		setTask({
-			...IDLE,
-			running: true,
-			phase: `正在上传到 oss://${currentPath}/`,
-			localPath,
-			startedAt: Date.now(),
-		})
-		setElapsed(0)
 		try {
 			await invoke("start_upload", {
 				req: {
@@ -141,7 +145,7 @@ export function TaskBar() {
 				},
 			})
 		} catch (err) {
-			setTask((t) => ({ ...t, running: false, phase: "启动失败", tone: "error" }))
+			setTask({ ...IDLE, phase: "error", note: String(err) })
 			appendLog(`[upload] ${err}`)
 			showToast(String(err), "error")
 		}
@@ -152,50 +156,44 @@ export function TaskBar() {
 		if (typeof selected === "string") void startUpload(selected)
 	}
 
-	const mm = String(Math.floor(elapsed / 60)).padStart(2, "0")
-	const ss = String(elapsed % 60).padStart(2, "0")
+	const running = task.phase === "running"
+	const verb = transferKind === "download" ? "正在下载" : "正在上传"
+
+	/* 百分比前面的"约"不能去：ossutil 报的是字节级进度，
+	   和用户感知的"传了几个文件"对不上，写"约"才是诚实的。 */
+	const headline =
+		task.phase === "running"
+			? `进行中（约 ${Math.round(task.percent)}%）`
+			: task.phase === "done"
+				? "已完成"
+				: task.phase === "error"
+					? task.note || "已中断"
+					: "暂无传输任务"
+
+	const detail = running
+		? task.files
+			? `${verb} ${task.files} 个文件`
+			: `${verb}…`
+		: task.note || "把文件夹拖进窗口即可上传到当前目录"
 
 	return (
-		<div className="taskbar">
-			<button
-				type="button"
-				className="taskbar-head"
-				aria-expanded={open_}
-				onClick={() => setOpen((v) => !v)}
-			>
-				<Icon name="chevron" className="chev" />
-				<span style={{ flex: 1, minWidth: 0 }}>{task.phase}</span>
-				{/* 折叠着也能看到进度，不用展开 */}
-				<span className="taskbar-brief">
-					{task.running && task.speed !== "—" && <span>{task.speed}</span>}
-					{(task.running || task.percent > 0) && <span>{task.percent.toFixed(0)}%</span>}
-				</span>
-			</button>
-
+		<div className="statusbar-wrap">
 			{open_ && (
-				<div className="taskbar-body">
-					<div className="bar">
-						<div
-							className={`bar-fill ${task.tone}`}
-							style={{ width: `${Math.max(0, Math.min(100, task.percent))}%` }}
-						/>
+				<div className="taskpanel" role="region" aria-label="传输明细">
+					<div className="taskpanel-head">{headline}</div>
+					<div className="taskpanel-row">
+						<span className="taskpanel-what">{detail}</span>
+						{/* 等宽字体：不然数字跳动时整行会左右抽动 */}
+						<span className="taskpanel-speed">{running ? formatSpeed(speed ?? 0) : ""}</span>
 					</div>
-					<div className="taskstats">
-						<span>{task.files} 文件</span>
-						<span>{task.speed} 速度</span>
-						<span>
-							{mm}:{ss} 用时
-						</span>
-						{task.localPath && <span title={task.localPath}>源 {task.localPath}</span>}
-					</div>
-					<div className="taskbar-actions">
-						<button type="button" className="btn" onClick={pick} disabled={task.running}>
+					<div className="taskpanel-actions">
+						<button type="button" className="btn" onClick={pick} disabled={running}>
 							选择文件夹上传
 						</button>
 						<button
 							type="button"
 							className="btn"
-							disabled={!task.running}
+							disabled={!running}
 							onClick={() => {
 								void invoke("cancel_upload")
 								appendLog("[user] 已请求停止（断点已保留，下次会接着传）")
@@ -203,12 +201,21 @@ export function TaskBar() {
 						>
 							停止
 						</button>
-						<span className="hint" style={{ alignSelf: "center" }}>
-							也可以直接把文件夹拖进窗口，传到当前目录
-						</span>
 					</div>
 				</div>
 			)}
+
+			<button
+				type="button"
+				className={`statusbar ${task.phase}`}
+				style={{ "--fill": `${Math.max(0, Math.min(100, task.percent))}%` } as React.CSSProperties}
+				aria-expanded={open_}
+				onClick={() => setOpen((v) => !v)}
+			>
+				<Icon name="chevron" className="chev" />
+				<span className="statusbar-text">{headline}</span>
+				{running && <span className="statusbar-speed">{formatSpeed(speed ?? 0)}</span>}
+			</button>
 		</div>
 	)
 }

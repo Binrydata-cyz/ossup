@@ -8,6 +8,8 @@ import {
 	groupOf,
 	middleTruncate,
 	parseDuration,
+	parseSpeed,
+	formatSpeed,
 } from "./format.ts"
 
 test("parseDuration 认 ossutil 的时长写法", () => {
@@ -83,4 +85,26 @@ test("middleTruncate：没有扩展名也不炸", () => {
 	const got = middleTruncate("A".repeat(100), 10)
 	assert.ok(got.length <= 10, got)
 	assert.ok(got.includes("…"))
+})
+
+test("parseSpeed 认 ossutil 1.x 和 2.x 两种写法", () => {
+	assert.equal(parseSpeed("1 B/s"), 1)
+	assert.equal(parseSpeed("1 KB/s"), 1024)
+	/* 2.x 的 MiB 和 1.x 的 MB 在 ossutil 里是同一个意思，都按 1024 算 */
+	assert.equal(parseSpeed("1 MiB/s"), 1024 ** 2)
+	assert.equal(parseSpeed("1 MB/s"), 1024 ** 2)
+	assert.equal(parseSpeed("6.6 MB/s"), 6.6 * 1024 ** 2)
+	assert.equal(parseSpeed("speed: 2 GB/s"), 2 * 1024 ** 3)
+})
+
+test("parseSpeed 认不出返回 null，不要猜成 0", () => {
+	assert.equal(parseSpeed(""), null)
+	assert.equal(parseSpeed("—"), null)
+	assert.equal(parseSpeed("MB/s"), null)
+})
+
+test("formatSpeed 给不出数就显示破折号", () => {
+	assert.equal(formatSpeed(1024), "1.0 KB/s")
+	assert.equal(formatSpeed(0), "—")
+	assert.equal(formatSpeed(NaN), "—")
 })

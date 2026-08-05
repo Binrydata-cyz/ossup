@@ -62,6 +62,30 @@ export function groupOf(iso: string, now: Date = new Date()): Group {
 
 export const GROUP_ORDER: Group[] = ["今天", "昨天", "本周", "上周", "本月", "更早"]
 
+/* ossutil 1.x 写 "1.2 MB/s"，2.x 写 "1.2 MiB/s"。两种都按 1024 进位算 ——
+   ossutil 内部就是这么算的，把 MB 当 1000 反而会把速度报低 2.4%。 */
+const SPEED_UNITS: Record<string, number> = {
+	"": 1,
+	k: 1024,
+	m: 1024 ** 2,
+	g: 1024 ** 3,
+	t: 1024 ** 4,
+}
+
+/** `"6.6 MB/s"` -> 每秒字节数。认不出返回 null，绝不猜成 0。 */
+export function parseSpeed(text: string): number | null {
+	const m = /([\d.]+)\s*([kmgt]?)i?b\/s/i.exec(text ?? "")
+	if (!m) return null
+	const value = Number(m[1])
+	if (!Number.isFinite(value)) return null
+	return value * SPEED_UNITS[m[2].toLowerCase()]
+}
+
+export function formatSpeed(bytesPerSecond: number): string {
+	if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "—"
+	return `${formatSize(bytesPerSecond)}/s`
+}
+
 const UNIT_SECONDS: Record<string, number> = {
 	s: 1,
 	m: 60,

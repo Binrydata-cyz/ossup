@@ -26,6 +26,11 @@ type UiState = {
 	confirm: ConfirmSpec | null
 	clipboard: Clipboard | null
 
+	/** 上传由 TaskBar 发起、下载由右键菜单发起，两边共用一条事件流，
+	    状态栏得知道当前这一趟是哪个方向才能写对文案 */
+	transferKind: "upload" | "download" | null
+
+	setTransferKind: (kind: "upload" | "download" | null) => void
 	showToast: (text: string, kind?: Toast["kind"]) => void
 	toggleLog: () => void
 	showPrompt: (spec: PromptSpec) => void
@@ -42,6 +47,9 @@ export const useUiStore = create<UiState>((set, get) => ({
 	prompt: null,
 	confirm: null,
 	clipboard: null,
+	transferKind: null,
+
+	setTransferKind: (transferKind) => set({ transferKind }),
 
 	showPrompt: (prompt) => set({ prompt, confirm: null }),
 	showConfirm: (confirm) => set({ confirm, prompt: null }),

@@ -47,18 +47,32 @@ test("nextToken 认字符串 true", () => {
 	assert.equal(nextToken({}), "")
 })
 
-test("kindOf 覆盖规格要求的七类", () => {
-	assert.equal(kindOf("a.json"), "code")
-	assert.equal(kindOf("a.jsonl"), "code")
-	assert.equal(kindOf("A.JSON"), "code")
+test("kindOf 覆盖各大类", () => {
 	assert.equal(kindOf("a.pdf"), "pdf")
-	assert.equal(kindOf("a.mp4"), "video")
 	assert.equal(kindOf("a.png"), "image")
 	assert.equal(kindOf("a.xlsx"), "sheet")
 	assert.equal(kindOf("a.zip"), "archive")
 	assert.equal(kindOf("a.docx"), "doc")
 	assert.equal(kindOf("a.bin"), "file")
 	assert.equal(kindOf("README"), "file")
+})
+
+test("音频和视频同归 video，共用视频图标", () => {
+	for (const ext of ["mp4", "mov", "mkv", "webm", "wav", "mp3", "flac", "m4a"]) {
+		assert.equal(kindOf(`a.${ext}`), "video", ext)
+	}
+})
+
+test("json / txt / csv 这类纯文本归 code", () => {
+	for (const ext of ["json", "jsonl", "txt", "csv", "tsv", "md", "log", "yaml", "xml"]) {
+		assert.equal(kindOf(`a.${ext}`), "code", ext)
+	}
+	assert.equal(kindOf("A.JSON"), "code")
+})
+
+test("csv 是纯文本不是电子表格，xlsx 才是", () => {
+	assert.equal(kindOf("a.csv"), "code")
+	assert.equal(kindOf("a.xlsx"), "sheet")
 })
 
 test(".ts 归视频而非 TypeScript —— OSS 上更可能是传输流", () => {

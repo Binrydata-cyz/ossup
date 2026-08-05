@@ -75,19 +75,27 @@ const BY_EXT: [Kind, Set<string>][] = [
 		"image",
 		new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico", "tif", "tiff", "avif", "heic"]),
 	],
+	/* 音频和视频归一类：都是"播放"的东西，共用视频图标 */
 	[
 		"video",
-		new Set(["mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "mpg", "mpeg", "ts"]),
+		new Set([
+			"mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "mpg", "mpeg", "ts",
+			"3gp", "rmvb", "m2ts", "vob",
+			"wav", "mp3", "flac", "aac", "m4a", "ogg", "oga", "opus", "wma", "aiff", "amr",
+		]),
 	],
-	["sheet", new Set(["xls", "xlsx", "xlsm", "csv", "tsv", "ods"])],
+	/* 表格类只留真正的电子表格；csv/tsv 是纯文本，归代码 */
+	["sheet", new Set(["xls", "xlsx", "xlsm", "ods", "numbers"])],
 	["doc", new Set(["doc", "docx", "odt", "rtf", "ppt", "pptx", "pages", "key"])],
 	["archive", new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst", "tgz"])],
 	[
 		"code",
 		new Set([
-			"json", "jsonl", "js", "mjs", "cjs", "jsx", "tsx", "py", "rs", "go", "java",
-			"c", "h", "cpp", "sh", "ps1", "yaml", "yml", "xml", "html", "css", "scss",
-			"md", "txt", "log", "sql", "toml", "ini", "conf", "env",
+			"json", "jsonl", "ndjson", "js", "mjs", "cjs", "jsx", "tsx", "py", "rs", "go",
+			"java", "c", "h", "cpp", "hpp", "cs", "rb", "php", "swift", "kt", "lua", "r",
+			"sh", "bat", "ps1", "yaml", "yml", "xml", "html", "htm", "css", "scss", "less",
+			"md", "txt", "text", "log", "csv", "tsv", "sql", "toml", "ini", "cfg", "conf",
+			"env", "properties", "srt", "vtt", "ass",
 		]),
 	],
 ]

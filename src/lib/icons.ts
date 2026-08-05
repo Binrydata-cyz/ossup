@@ -11,7 +11,8 @@ import bucketPng from "../../src-tauri/icons/bucket2.png"
 import codePng from "../../src-tauri/icons/code2.png"
 import folderPng from "../../src-tauri/icons/folder2.png"
 import pdfPng from "../../src-tauri/icons/pdf2.png"
-import videoPng from "../../src-tauri/icons/video2.png"
+/* 这张是 48px，比其他那套 32px 更清楚，大图标视图也能直接用 */
+import videoPng from "../../src-tauri/icons/icons8-视频文件-48.png"
 
 import type { Kind } from "./objects.ts"
 

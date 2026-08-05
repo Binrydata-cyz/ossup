@@ -54,4 +54,8 @@ export const download = (
 	uploadReq: Record<string, unknown>,
 	source: string,
 	target: string,
-) => invoke("start_download", { req: uploadReq, source, target })
+	/* 远端是目录才递归。单个对象带 -r 会被 ossutil 拒绝，
+	   而 oss:// 路径没法在后端 stat，只能由这里按列表里的类型告知。 */
+	recursive: boolean,
+	taskId: string,
+) => invoke("start_download", { req: uploadReq, source, target, recursive, taskId })

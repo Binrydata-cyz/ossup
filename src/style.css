@@ -2225,3 +2225,78 @@ button svg,
 	display: flex;
 	gap: var(--space-2);
 }
+
+/* ---------- 明细面板：多任务列表 ---------- */
+
+.taskpanel-head {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+}
+
+.taskpanel-sub {
+	font-size: var(--text-sm);
+	font-weight: 400;
+	color: var(--text-2);
+}
+
+.tasklist {
+	display: grid;
+	gap: var(--space-1);
+	max-height: 11rem;
+	overflow-y: auto;
+}
+
+.taskrow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+	font-size: var(--text-md);
+	color: var(--text-2);
+}
+
+.taskrow > svg {
+	width: 0.875rem;
+	height: 0.875rem;
+	flex: none;
+	opacity: 0.7;
+}
+
+/* 下载沿用后退箭头，转 90° 当成"向下" */
+.taskrow > svg:not(:first-child) {
+	transform: none;
+}
+
+.taskrow-pct {
+	flex: none;
+	min-width: 2.5rem;
+	text-align: right;
+	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
+	font-size: var(--text-xs);
+}
+
+.taskrow-stop {
+	flex: none;
+	width: 1.25rem;
+	height: 1.25rem;
+	display: grid;
+	place-items: center;
+	padding: 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-3);
+	cursor: pointer;
+}
+
+.taskrow-stop:hover {
+	background: var(--surface-2);
+	color: var(--text);
+}
+
+.taskrow-stop svg {
+	width: 0.75rem;
+	height: 0.75rem;
+}

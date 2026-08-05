@@ -11,6 +11,8 @@ import { friendlyError } from "./ossApi.ts"
 import { copyTo, download, makeDir, moveTo, presign, remove, uriOf } from "./ossOps.ts"
 import { splitPath, useExplorerStore } from "../store/explorer.ts"
 import { useSessionStore } from "../store/session.ts"
+import { newTaskId } from "./transferReq.ts"
+import { useTransfersStore } from "../store/transfers.ts"
 import { useUiStore, type ClipItem } from "../store/ui.ts"
 
 /** 名字冲突时补 (2)(3)…，扩展名留在最后：报告.json -> 报告 (2).json */
@@ -108,16 +110,24 @@ export function useOssActions() {
 		void (async () => {
 			const target = await pickPath({ directory: true, multiple: false })
 			if (typeof target !== "string") return
-			await run(
-				"下载",
-				async () => {
-					/* 上传和下载共用一条事件流，状态栏靠这个标记写对文案 */
-					useUiStore.getState().setTransferKind("download")
-					await download(transferReq(target), uriOf(bucket, item.key), target)
-					showToast("下载已开始，进度看底部状态栏", "success")
-				},
-				false,
-			)
+			/* 下载不走 run()：它是长任务，进度归状态栏管，
+			   在这里 await 会把 busy 一直卡住、挡掉其它操作 */
+			const id = newTaskId()
+			useTransfersStore.getState().start({ id, kind: "download", label: item.name })
+			try {
+				await download(
+					transferReq(target),
+					uriOf(bucket, item.key),
+					target,
+					item.folder,
+					id,
+				)
+				showToast("下载已开始，进度看底部状态栏", "success")
+			} catch (err) {
+				useTransfersStore.getState().fail(id, String(err))
+				session.appendLog(`[下载] ${err}`)
+				showToast(`下载失败：${friendlyError(err)}`, "error")
+			}
 		})()
 	}
 

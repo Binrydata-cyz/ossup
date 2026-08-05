@@ -350,6 +350,10 @@ impl UploadRequest {
 #[serde(rename_all = "camelCase")]
 struct UploadEvent {
     kind: &'static str,
+    /// 哪个任务发出来的。多任务并发时前端靠它把进度分派到对应的行上，
+    /// 不带这个所有任务的进度会糊成一团。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     line: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -368,6 +372,7 @@ impl UploadEvent {
     fn log(line: String) -> Self {
         Self {
             kind: "log",
+            task_id: None,
             line: Some(line),
             percent: None,
             speed: None,
@@ -375,6 +380,11 @@ impl UploadEvent {
             ok_num: None,
             code: None,
         }
+    }
+
+    fn for_task(mut self, task_id: &str) -> Self {
+        self.task_id = Some(task_id.to_string());
+        self
     }
 }
 
@@ -436,6 +446,7 @@ fn parse_line(line: &str) -> UploadEvent {
 
     UploadEvent {
         kind: if is_progress { "progress" } else { "log" },
+        task_id: None,
         line: Some(line.to_string()),
         percent,
         speed,
@@ -452,7 +463,7 @@ fn parse_line(line: &str) -> UploadEvent {
 /// Reads a child stream byte by byte and flushes a segment on `\n` **or**
 /// `\r`. Line-oriented readers hang forever on `ossutil`'s progress output
 /// because it repaints the same line with carriage returns.
-async fn pump<R>(mut reader: R, app: AppHandle)
+async fn pump<R>(mut reader: R, app: AppHandle, task_id: String)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
@@ -465,7 +476,7 @@ where
             Ok(n) => {
                 for &byte in &chunk[..n] {
                     if byte == b'\n' || byte == b'\r' {
-                        flush(&mut acc, &app);
+                        flush(&mut acc, &app, &task_id);
                     } else {
                         acc.push(byte);
                     }
@@ -474,10 +485,10 @@ where
             Err(_) => break,
         }
     }
-    flush(&mut acc, &app);
+    flush(&mut acc, &app, &task_id);
 }
 
-fn flush(acc: &mut Vec<u8>, app: &AppHandle) {
+fn flush(acc: &mut Vec<u8>, app: &AppHandle, task_id: &str) {
     if acc.is_empty() {
         return;
     }
@@ -486,7 +497,7 @@ fn flush(acc: &mut Vec<u8>, app: &AppHandle) {
     if text.is_empty() {
         return;
     }
-    let _ = app.emit(EVENT, parse_line(&text));
+    let _ = app.emit(EVENT, parse_line(&text).for_task(task_id));
 }
 
 /* ------------------------------------------------------------------ */
@@ -506,8 +517,22 @@ fn region_from_endpoint(endpoint: &str) -> Option<String> {
     .map(|c| c[1].to_lowercase())
 }
 
+/// 每次调用给一个独一无二的凭证文件名。
+///
+/// 以前所有操作共用 `session.ossutilconfig` 一个固定路径，并且用完就删 ——
+/// 并发之后这是致命的：一次列目录跑完会把正在传输的任务的凭证文件删掉，
+/// 两个同时启动的任务还会互相覆盖对方的内容。
+fn cred_tag() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!(
+        "{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
 fn write_cred_file(app: &AppHandle, ak: &str, sk: &str, endpoint: &str) -> Result<PathBuf, String> {
-    let path = config_dir(app)?.join("session.ossutilconfig");
+    let path = config_dir(app)?.join(format!("session-{}.ossutilconfig", cred_tag()));
     let endpoint = endpoint.trim();
     let mut body = format!(
         "[default]\nlanguage=CH\naccessKeyID={}\naccessKeySecret={}\n",
@@ -686,9 +711,13 @@ async fn oss_run(app: AppHandle, auth: Auth, args: Vec<String>) -> Result<String
 /* upload                                                              */
 /* ------------------------------------------------------------------ */
 
+/// 并发中的传输任务表，按前端给的 task_id 索引。
+///
+/// 以前是单个 `Option<Child>`，第二个任务直接被拒。改成 HashMap 之后
+/// 上传和下载可以同时跑、各自独立取消。
 #[derive(Default)]
 pub struct AppState {
-    child: Arc<Mutex<Option<Child>>>,
+    children: Arc<Mutex<std::collections::HashMap<String, Child>>>,
 }
 
 #[tauri::command]
@@ -696,16 +725,32 @@ async fn start_upload(
     app: AppHandle,
     state: State<'_, AppState>,
     req: UploadRequest,
+    task_id: String,
 ) -> Result<(), String> {
     let source = PathBuf::from(&req.local_path);
     if !source.exists() {
         return Err(format!("本地路径不存在: {}", req.local_path));
     }
     let target = req.target();
-    spawn_transfer(app, state, req, source.display().to_string(), target).await
+    // 单个文件不能带 -r，ossutil 会直接拒绝：
+    // "xxx is a not directory, can not work with --recursive option"
+    let recursive = source.is_dir();
+    spawn_transfer(
+        app,
+        state,
+        req,
+        source.display().to_string(),
+        target,
+        recursive,
+        task_id,
+    )
+    .await
 }
 
 /// 下载就是把 `cp` 的两端调个个儿：断点续传、进度解析、取消，全都原样复用。
+///
+/// `recursive` 由前端按列表里的类型给：目录（OSS 上的 key 前缀）才要 `-r`，
+/// 单个对象带上会被 ossutil 拒绝。`oss://` 路径没法在后端 stat，只能这样传。
 #[tauri::command]
 async fn start_download(
     app: AppHandle,
@@ -713,8 +758,10 @@ async fn start_download(
     req: UploadRequest,
     source: String,
     target: String,
+    recursive: bool,
+    task_id: String,
 ) -> Result<(), String> {
-    spawn_transfer(app, state, req, source, target).await
+    spawn_transfer(app, state, req, source, target, recursive, task_id).await
 }
 
 /// `ossutil cp` 的公共流水线：凭证文件 -> spawn -> 边读边发进度 -> 退出后清理。
@@ -724,9 +771,11 @@ async fn spawn_transfer(
     req: UploadRequest,
     source: String,
     target: String,
+    recursive: bool,
+    task_id: String,
 ) -> Result<(), String> {
-    if state.child.lock().await.is_some() {
-        return Err("已有传输任务在运行".into());
+    if state.children.lock().await.contains_key(&task_id) {
+        return Err(format!("任务 {task_id} 已在运行"));
     }
 
     let cfg_dir = config_dir(&app)?;
@@ -737,9 +786,11 @@ async fn spawn_transfer(
     let part_bytes = req.part_size_mb.max(1) * 1024 * 1024;
 
     let mut cmd = base_command(&app, &req.ossutil_path);
-    cmd.arg("cp")
-        .arg("-r") // recurse into the folder
-        .arg("-u") // skip objects that are already up to date
+    cmd.arg("cp");
+    if recursive {
+        cmd.arg("-r"); // 只有目录才递归；单个文件带 -r 会被 ossutil 拒绝
+    }
+    cmd.arg("-u") // skip objects that are already up to date
         .arg("-f"); // never prompt
     add_auth_args(&mut cmd, &cred_file, &req.endpoint);
     cmd.arg("--checkpoint-dir")
@@ -788,31 +839,33 @@ async fn spawn_transfer(
     })?;
 
     if let Some(stdout) = child.stdout.take() {
-        tokio::spawn(pump(stdout, app.clone()));
+        tokio::spawn(pump(stdout, app.clone(), task_id.clone()));
     }
     if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(pump(stderr, app.clone()));
+        tokio::spawn(pump(stderr, app.clone(), task_id.clone()));
     }
 
-    let slot = state.child.clone();
-    *slot.lock().await = Some(child);
+    let table = state.children.clone();
+    table.lock().await.insert(task_id.clone(), child);
 
-    // Poll instead of awaiting `wait()` so `cancel_upload` can take the lock.
+    let id = task_id.clone();
+    // 轮询而不是 await wait()：await 会一直占着锁，取消命令就拿不到了。
     tokio::spawn(async move {
         let code = loop {
             tokio::time::sleep(Duration::from_millis(250)).await;
-            let mut guard = slot.lock().await;
-            let Some(child) = guard.as_mut() else {
+            let mut guard = table.lock().await;
+            // 只动自己那一项，别碰别的任务
+            let Some(child) = guard.get_mut(&id) else {
                 break -1;
             };
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    *guard = None;
+                    guard.remove(&id);
                     break status.code().unwrap_or(-1);
                 }
                 Ok(None) => continue,
                 Err(_) => {
-                    *guard = None;
+                    guard.remove(&id);
                     break -1;
                 }
             }
@@ -823,6 +876,7 @@ async fn spawn_transfer(
             EVENT,
             UploadEvent {
                 kind: "finished",
+                task_id: Some(task_id.clone()),
                 line: Some(format!("[exit] ossutil 退出码 {code}")),
                 percent: None,
                 speed: None,
@@ -836,14 +890,30 @@ async fn spawn_transfer(
     Ok(())
 }
 
+/// 取消指定任务；`task_id` 为空则全部取消。
+///
+/// 只发 kill，不从表里删 —— 让轮询那边统一收尾，才能保证 finished 事件
+/// 一定会发出去（前端靠它把这一行从列表里摘掉）。
 #[tauri::command]
-async fn cancel_upload(state: State<'_, AppState>) -> Result<(), String> {
-    let mut guard = state.child.lock().await;
-    if let Some(child) = guard.as_mut() {
-        child.start_kill().map_err(|e| e.to_string())?;
-        Ok(())
-    } else {
-        Err("没有正在运行的上传任务".into())
+async fn cancel_transfer(
+    state: State<'_, AppState>,
+    task_id: Option<String>,
+) -> Result<(), String> {
+    let mut guard = state.children.lock().await;
+    match task_id {
+        Some(id) => match guard.get_mut(&id) {
+            Some(child) => child.start_kill().map_err(|e| e.to_string()),
+            None => Err("这个任务已经不在运行了".into()),
+        },
+        None => {
+            if guard.is_empty() {
+                return Err("没有正在运行的传输任务".into());
+            }
+            for child in guard.values_mut() {
+                let _ = child.start_kill();
+            }
+            Ok(())
+        }
     }
 }
 
@@ -942,7 +1012,7 @@ pub fn run() {
             oss_run,
             start_upload,
             start_download,
-            cancel_upload,
+            cancel_transfer,
             verify_upload,
         ])
         .run(tauri::generate_context!())

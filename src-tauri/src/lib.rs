@@ -579,7 +579,14 @@ async fn oss_api(
         .stdin(Stdio::null())
         .output()
         .await
-        .map_err(|e| format!("无法启动 ossutil: {e}"))?;
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&cred_file);
+            format!("无法启动 ossutil: {e}")
+        })?;
+
+    // 这个文件里是明文 AK/SK，用完立刻删掉，别让它留在磁盘上。
+    // Windows 上 restrict_permissions 是空实现，更不能留。
+    let _ = std::fs::remove_file(&cred_file);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !output.status.success() {

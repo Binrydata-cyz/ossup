@@ -1,4 +1,26 @@
+/* Archivo Black 只有一个字重（400 就是它的"黑体"本身），没有更粗的可选。
+   所以用它的地方一律不要写 font-weight: bold —— 浏览器会去做合成加粗
+   （faux bold），在本来就很重的字面上糊成一团。
+
+   font-display: block 而不是 swap——登录页一闪而过，用 swap 会看到字体从
+   fallback 跳到 Archivo，反而更难看。
+
+   字体必须打进包：本应用 CSP 是 default-src 'self'，Google Fonts 的 CDN
+   链接会被拦掉。文件放 public/fonts/，Vite 原样拷贝、不做构建期解析，
+   所以文件没放进去也不会让构建失败，只是退回后备字体。 */
+@font-face {
+	font-family: "Archivo Black";
+	src: url("/fonts/ArchivoBlack-Regular.woff2") format("woff2");
+	font-weight: 400;
+	font-style: normal;
+	font-display: block;
+}
+
 :root {
+	/* 字标专用。后备用系统里最接近的无衬线粗体，字体缺失时不至于变默认宋体 */
+	--font-display: "Archivo Black", "Segoe UI Black", "Arial Black",
+		"Helvetica Neue", system-ui, sans-serif;
+
 	/* ---- 颜色 ---- */
 	--text: #24242a;
 	--text-2: #76757f;
@@ -194,13 +216,6 @@ button svg,
 	user-select: none;
 }
 
-.titlebar .logo {
-	width: 1.125rem;
-	height: 1.125rem;
-	display: block;
-	-webkit-user-drag: none;
-}
-
 .titlebar-spacer {
 	flex: 1;
 	align-self: stretch;
@@ -227,6 +242,84 @@ button svg,
 .winbtn.close:hover {
 	background: var(--red);
 	color: #fff;
+}
+
+/* ---- 登录门在场时：标题栏透明浮在分栏之上 ----
+   .gate 是 z-index:100 的 fixed 层且从 inset:0 起算，标题栏不抬到它上面就会被
+   盖住、窗口按钮点不动。透明之后左半截落在浅色表单栏、右半截落在深色栏上。
+   窗口按钮和 ossutil 状态都在右边，所以按深色配色给；窄窗口下右栏隐藏，
+   这些颜色要跟着还原，见下面的断点。 */
+
+.titlebar.on-gate {
+	position: relative;
+	z-index: 101;
+	background: transparent;
+	border-bottom-color: transparent;
+}
+
+.titlebar.on-gate .winbtn {
+	color: #8a97b0;
+}
+
+.titlebar.on-gate .winbtn:hover {
+	background: rgba(255, 255, 255, 0.09);
+	color: #fff;
+}
+
+.titlebar.on-gate .winbtn.close:hover {
+	background: var(--red);
+	color: #fff;
+}
+
+.titlebar.on-gate .engine {
+	color: #8a97b0;
+}
+
+.titlebar.on-gate .engine.ok {
+	color: #4cc38a;
+}
+
+.titlebar.on-gate .engine.error {
+	color: #f0736a;
+}
+
+/* 窗口窄到装不下分栏：右栏整个收起，表单铺满，
+   标题栏这时压在浅色上，深色配色要还原回来 */
+@media (max-width: 58em) {
+	.gate {
+		grid-template-columns: 1fr;
+	}
+
+	.gate-visual {
+		display: none;
+	}
+
+	.gate-form {
+		justify-items: center;
+	}
+
+	.gate-form>* {
+		width: 100%;
+		max-width: 26rem;
+	}
+
+	.titlebar.on-gate .winbtn,
+	.titlebar.on-gate .engine {
+		color: var(--text-2);
+	}
+
+	.titlebar.on-gate .winbtn:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+
+	.titlebar.on-gate .engine.ok {
+		color: var(--green);
+	}
+
+	.titlebar.on-gate .engine.error {
+		color: var(--red);
+	}
 }
 
 /* ================= 导航栏 ================= */
@@ -1007,10 +1100,12 @@ button svg,
 }
 
 @keyframes breathe {
+
 	0%,
 	100% {
 		opacity: 0.45;
 	}
+
 	50% {
 		opacity: 1;
 	}
@@ -1211,46 +1306,212 @@ button svg,
 
 /* ================= 连接门 ================= */
 
+/* 左右分栏：左边表单（浅色），右边深色动态背景。
+   inset 从 0 起算、盖住标题栏，右栏才能一直顶到窗口右上角；
+   标题栏靠 .on-gate 抬到更高的 z-index 上浮着，见上面那段。 */
 .gate {
 	position: fixed;
-	inset: var(--titlebar-h) 0 0;
+	inset: 0;
 	z-index: 100;
 	display: grid;
-	place-items: center;
-	padding: var(--space-4);
-	overflow: auto;
-	background: color-mix(in srgb, var(--soft) 88%, transparent);
-	backdrop-filter: blur(0.5rem);
+	grid-template-columns: minmax(24rem, 30rem) 1fr;
+	background: var(--canvas);
 }
 
+.gate-form {
+	display: grid;
+	align-content: center;
+	gap: var(--space-4);
+	/* 顶部让开标题栏，免得品牌区被窗口按钮压住 */
+	padding: calc(var(--titlebar-h) + 2rem) clamp(2rem, 5vw, 4rem) 2rem;
+	overflow-y: auto;
+	min-width: 0;
+}
+
+/* 品牌行现在坐在表单顶部、AccessKey ID 上方，居中 */
+.gate-brand {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	font-family: var(--font-display);
+	font-size: 1.125rem;
+	/* 不写 font-weight：Archivo Black 自带就是最重的一档 */
+	letter-spacing: 0.06em;
+	color: var(--text);
+}
+
+.gate-brand img {
+	width: 1.75rem;
+	height: 1.75rem;
+}
+
+.gate-visual {
+	position: relative;
+	overflow: hidden; /* 云靠这个裁切出画，删了就没有“半朵”效果 */
+	isolation: isolate;
+	display: grid;
+	place-items: center;
+	background: #05070f;
+	container-type: inline-size; /* 字号跟着本栏宽度走，不跟窗口走 */
+	min-width: 0;
+}
+
+/* 左侧与表单拼接处羽化：从画布底色渐变到透明，柔化硬切边 */
+.gate-visual::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 1rem;
+	z-index: 2;
+	background: linear-gradient(to right, var(--canvas), transparent);
+	pointer-events: none;
+}
+
+/* ---- 右栏视觉：静态分层渐变 + 大云轮廓 ---- */
+
+.vis-bg {
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(158deg, #102147 0%, #0a1229 40%, #070b18 74%, #04060d 100%);
+}
+
+.vis-glow {
+	position: absolute;
+	border-radius: 50%;
+	filter: blur(6rem);
+}
+
+.vis-glow.g1 {
+	width: 78%;
+	aspect-ratio: 1;
+	left: -14%;
+	top: 0;
+	background: #1e3a7a;
+	opacity: 0.52;
+}
+
+.vis-glow.g2 {
+	width: 86%;
+	aspect-ratio: 1;
+	right: -30%;
+	top: 40%;
+	background: #0d3f78;
+	opacity: 0.38;
+}
+
+.vis-glow.g3 {
+	width: 60%;
+	aspect-ratio: 1;
+	left: 22%;
+	bottom: -18%;
+	background: #16224d;
+	opacity: 0.65;
+}
+
+/* 暗角：把视线收到中间的字标上 */
+.vis-vignette {
+	position: absolute;
+	inset: 0;
+	background: radial-gradient(120% 78% at 46% 46%, transparent 46%, rgba(2, 4, 10, 0.7) 100%);
+}
+
+/* 云：以本栏中心为锚点，再做一次微偏移把文字摆进云肚子偏上的位置。
+   width 取 165% 和 112vh 的较小值 —— 窗口最大化时本栏变得又宽又矮，
+   只按宽度算云会高得离谱，只剩一段弧看不出是云。 */
+.vis-cloud {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: min(165%, 112vh);
+	aspect-ratio: 1;
+	transform: translate(-50%, -50%) translate(5.5%, -1.4%);
+	pointer-events: none;
+}
+
+.vis-cloud svg {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+/* 外层再套一层更大的云：放大 1.25 倍、整体降透明度，做出层次 */
+.vis-cloud .vis-cloud-outer {
+	transform: scale(1.25);
+	opacity: 0.55;
+}
+
+/* 噪点消掉深色渐变的色带。data: URI 靠 CSP 里的 img-src 'self' data: 才不会被拦。
+   放在云后面，噪点要盖在云线上，不然云线看着会太“干净”，和背景不是一层。 */
+.vis-grain {
+	position: absolute;
+	inset: 0;
+	opacity: 0.055;
+	mix-blend-mode: overlay;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.vis-wrap {
+	position: relative; /* 压在云上面 */
+	text-align: center;
+	padding-inline: 2.5rem;
+}
+
+.vis-word {
+	font-family: "Archivo Black", "Noto Sans", system-ui, sans-serif;
+	font-weight: 400; /* Archivo Black 本身就是黑体，写 900 会触发合成加粗 */
+	font-size: clamp(1.5rem, 5.7cqw, 3rem);
+	line-height: 1;
+	color: #fff;
+	letter-spacing: 0.07em;
+	text-indent: 0.07em; /* 补掉最后一个字母右侧多出的字距，才是真居中 */
+}
+
+.vis-rule {
+	inline-size: 8.7cqw;
+	block-size: 0.125rem;
+	margin: 1.1em auto;
+	background: rgba(90, 169, 255, 0.6);
+}
+
+.vis-tag {
+	font-size: clamp(0.7rem, 1.4cqw, 1rem);
+	color: rgba(255, 255, 255, 0.52);
+	letter-spacing: 0.3em;
+	text-indent: 0.3em;
+}
+
+.vis-foot {
+	position: absolute;
+	inset-inline: 0;
+	bottom: 2.6rem;
+	text-align: center;
+	font-size: clamp(0.62rem, 1.1cqw, 0.8rem);
+	font-weight: 600;
+	letter-spacing: 0.2em;
+	text-indent: 0.2em;
+	color: rgba(255, 255, 255, 0.24);
+}
+
+
+/* 分栏之后卡片已经站在自己的浅色栏里，不需要边框和投影再框一层 */
 .gate-card {
 	width: 100%;
-	max-width: 26rem;
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-4);
-	padding: 1.625rem;
-	background: var(--canvas);
-	border: var(--border-w) solid var(--border);
-	border-radius: var(--radius-lg);
-	box-shadow: var(--shadow-pop);
 }
 
 .gate-head {
 	display: flex;
 	flex-direction: column;
-	gap: var(--space-1);
-}
-
-.gate-head img {
-	width: 2.5rem;
-	height: 2.5rem;
-	margin-bottom: var(--space-1);
-}
-
-.gate-head h2 {
-	margin: 0;
-	font-size: 1.0625rem;
+	gap: var(--space-2);
+	margin-bottom: var(--space-2);
+	text-align: center;
 }
 
 .gate-head p {
@@ -1297,21 +1558,33 @@ button svg,
 }
 
 .affix input {
-	padding-right: 3.375rem;
+	padding-right: 2.5rem;
 }
 
-.affix button {
+/* 眼睛图标按钮：不给底色，免得在输入框里像个第二个控件 */
+.affix-icon {
 	position: absolute;
 	right: var(--space-1);
 	top: var(--space-1);
+	width: 1.75rem;
 	height: 1.75rem;
-	padding: 0 var(--space-2);
-	font-size: var(--text-sm);
+	display: grid;
+	place-items: center;
+	padding: 0;
 	color: var(--text-2);
-	background: var(--surface-2);
+	background: transparent;
 	border: none;
 	border-radius: var(--radius-sm);
 	cursor: pointer;
+}
+
+.affix-icon:hover {
+	color: var(--text);
+	background: var(--surface-2);
+}
+
+.affix-icon[aria-pressed="true"] {
+	color: var(--blue);
 }
 
 .hint {
@@ -1333,7 +1606,7 @@ button svg,
 .check input {
 	width: 0.9375rem;
 	height: 0.9375rem;
-	accent-color: var(--blue);
+	accent-color: #55a0d6;
 	margin: 0;
 }
 
@@ -1464,10 +1737,21 @@ button svg,
 	}
 }
 
-.field select {
+/* ---- Endpoint 自定义下拉 ---- */
+
+.eselect {
+	position: relative;
+	min-width: 0;
+}
+
+.eselect-btn {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
 	width: 100%;
 	height: 2.25rem;
-	padding: 0 var(--space-2);
+	padding: 0 var(--space-3);
 	font: inherit;
 	font-size: var(--text-md);
 	color: var(--text);
@@ -1476,12 +1760,89 @@ button svg,
 	border-radius: var(--radius-sm);
 	outline: none;
 	cursor: pointer;
+	text-align: left;
 }
 
-.field select:focus-visible {
+.eselect-btn .placeholder {
+	color: var(--text-3);
+}
+
+.eselect-btn svg {
+	width: 0.9375rem;
+	height: 0.9375rem;
+	flex: none;
+	color: var(--text-2);
+	transition: transform 0.15s;
+}
+
+.eselect-btn.open {
 	background: var(--canvas);
 	border-color: var(--blue);
 	box-shadow: var(--ring);
+}
+
+.eselect-btn.open svg {
+	transform: rotate(180deg);
+}
+
+/* 弹层：圆角 + 投影，覆盖在表单之上 */
+.eselect-pop {
+	position: absolute;
+	top: calc(100% + var(--space-1));
+	left: 0;
+	right: 0;
+	z-index: 220;
+	max-height: 15rem;
+	overflow-y: auto;
+	padding: var(--space-1);
+	background: var(--canvas);
+	border: var(--border-w) solid var(--border);
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-pop);
+}
+
+/* 选项：悬停与选中都走浅蓝 */
+.eselect-opt {
+	display: block;
+	width: 100%;
+	padding: var(--space-1) var(--space-2);
+	border: none;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text);
+	font: inherit;
+	font-size: var(--text-md);
+	text-align: left;
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.eselect-opt:hover {
+	background: var(--accent-subtle);
+}
+
+.eselect-opt.sel {
+	background: color-mix(in srgb, var(--accent-subtle) 55%, var(--blue));
+	color: var(--blue-2);
+	font-weight: 600;
+}
+
+/* 登录按钮：专用深蓝 */
+.gate-card .btn.primary {
+	background: #0f5695;
+	border-color: #0f5695;
+}
+
+.gate-card .btn.primary:hover:not(:disabled) {
+	background: #115f9e;
+	border-color: #115f9e;
+}
+
+.gate-card .btn.primary:disabled {
+	background: #0f5695;
+	border-color: #0f5695;
 }
 
 .tab-rename {
@@ -1645,4 +2006,71 @@ button svg,
 .modal p.hint {
 	white-space: pre-line;
 	word-break: break-all;
+}
+
+/* ---------- 「记住凭证」旁边的问号说明 ---------- */
+
+.check-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.hintmark {
+	position: relative;
+	flex: none;
+	width: 1rem;
+	height: 1rem;
+	display: grid;
+	place-items: center;
+	border-radius: 50%;
+	border: var(--border-w) solid var(--border);
+	color: var(--text-2);
+	font-size: var(--text-xs);
+	line-height: 1;
+	cursor: help;
+	user-select: none;
+}
+
+.hintmark:hover,
+.hintmark:focus-visible {
+	color: var(--text);
+	border-color: var(--text-2);
+	outline: none;
+}
+
+/* 说明气泡。
+   fixed 而不是 absolute：祖先 .gate-form 是 overflow-y:auto 的滚动容器，
+   绝对定位的后代一定被裁掉。left/top 由 JS 实测问号位置后写进 style。
+   translate 的 -100% 把气泡抬到问号上方。 */
+.tip {
+	position: fixed;
+	transform: translate(-50%, -100%);
+	z-index: 200;
+	width: max-content;
+	max-width: min(22rem, 70vw);
+	display: grid;
+	gap: var(--space-1);
+	padding: var(--space-2) var(--space-3);
+	background: #4a4a52;
+	color: #e9e9ee;
+	border-radius: var(--radius);
+	box-shadow: var(--shadow-pop);
+	font-size: var(--text-sm);
+	line-height: 1.55;
+	text-align: left;
+	cursor: default;
+	pointer-events: none;
+}
+
+.tip code {
+	font-family: var(--mono);
+	font-size: var(--text-xs);
+	word-break: break-all;
+	color: #b9c6e4;
+}
+
+.tip b {
+	color: #fff;
+	font-weight: 600;
 }

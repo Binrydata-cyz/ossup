@@ -3,7 +3,6 @@
 
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
-import logo from "../../src-tauri/icons/icons8-32.png"
 import { useSessionStore } from "../store/session.ts"
 import { Icon } from "./Icon.tsx"
 
@@ -18,8 +17,8 @@ export function TitleBar() {
 	const shortAk = ak.length > 10 ? `${ak.slice(0, 6)}…${ak.slice(-4)}` : ak
 
 	return (
-		<div className="titlebar">
-			<img className="logo" src={logo} alt="" draggable={false} />
+		/* 登录门是深色的，标题栏跟着换色才不会在顶上留一条突兀的白条 */
+		<div className={`titlebar ${connected ? "" : "on-gate"}`}>
 			{/* 拖动区只给这块空白，按钮才不会一点就变成拖窗口 */}
 			<div className="titlebar-spacer" data-tauri-drag-region />
 
@@ -33,10 +32,14 @@ export function TitleBar() {
 				</div>
 			)}
 
-			<div className={`engine ${engine.state === "checking" ? "" : engine.state}`}>
-				<span className="dot" />
-				<span>{engine.text}</span>
-			</div>
+			{/* 正常情况下不显示版本号 —— 一切正常时它只是噪音。
+			    只有探测失败才浮出来，因为那时用户必须知道。 */}
+			{engine.state === "error" && (
+				<div className="engine error">
+					<span className="dot" />
+					<span>{engine.text}</span>
+				</div>
+			)}
 
 			<button type="button" className="winbtn" aria-label="最小化" onClick={() => win.minimize()}>
 				<Icon name="minimize" />

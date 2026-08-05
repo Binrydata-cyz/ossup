@@ -616,6 +616,65 @@ fn parse_api_output(stdout: &str) -> Result<serde_json::Value, String> {
     }
 }
 
+/// 任意 ossutil 子命令的透传，返回 stdout。
+///
+/// `oss_api` 走的是 `ossutil api <REST-API>`；`cp` / `rm` / `mkdir` / `presign`
+/// 这些是顶层子命令，不在 api 底下，所以单开一个入口。区别只有一处：认证参数
+/// 插在子命令名之后、其余参数之前 —— `cp src dst` 的位置参数顺序不能被打乱。
+///
+/// ponytail: 前端能跑任意子命令。这是本地桌面应用，webview 里跑的就是本仓库的
+/// 代码，不是信任边界；真要收紧就在这里加一张子命令白名单。
+#[tauri::command]
+async fn oss_run(app: AppHandle, auth: Auth, args: Vec<String>) -> Result<String, String> {
+    let Some((sub, rest)) = args.split_first() else {
+        return Err("没有指定 ossutil 子命令".into());
+    };
+
+    let cred_file = write_cred_file(
+        &app,
+        &auth.access_key_id,
+        &auth.access_key_secret,
+        &auth.endpoint,
+    )?;
+
+    let mut cmd = base_command(&app, &auth.ossutil_path);
+    cmd.arg(sub);
+    add_auth_args(&mut cmd, &cred_file, &auth.endpoint);
+    cmd.args(rest);
+
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&cred_file);
+            format!("无法启动 ossutil: {e}")
+        })?;
+
+    let _ = std::fs::remove_file(&cred_file);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if output.status.success() {
+        return Ok(stdout.trim().to_string());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let msg = stderr
+        .lines()
+        .chain(stdout.lines())
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.ends_with("(s) elapsed"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(if msg.is_empty() {
+        format!("ossutil {sub} 执行失败")
+    } else {
+        msg
+    })
+}
+
 /* ------------------------------------------------------------------ */
 /* upload                                                              */
 /* ------------------------------------------------------------------ */
@@ -631,13 +690,36 @@ async fn start_upload(
     state: State<'_, AppState>,
     req: UploadRequest,
 ) -> Result<(), String> {
-    if state.child.lock().await.is_some() {
-        return Err("已有上传任务在运行".into());
-    }
-
     let source = PathBuf::from(&req.local_path);
     if !source.exists() {
         return Err(format!("本地路径不存在: {}", req.local_path));
+    }
+    let target = req.target();
+    spawn_transfer(app, state, req, source.display().to_string(), target).await
+}
+
+/// 下载就是把 `cp` 的两端调个个儿：断点续传、进度解析、取消，全都原样复用。
+#[tauri::command]
+async fn start_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: UploadRequest,
+    source: String,
+    target: String,
+) -> Result<(), String> {
+    spawn_transfer(app, state, req, source, target).await
+}
+
+/// `ossutil cp` 的公共流水线：凭证文件 -> spawn -> 边读边发进度 -> 退出后清理。
+async fn spawn_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: UploadRequest,
+    source: String,
+    target: String,
+) -> Result<(), String> {
+    if state.child.lock().await.is_some() {
+        return Err("已有传输任务在运行".into());
     }
 
     let cfg_dir = config_dir(&app)?;
@@ -646,7 +728,6 @@ async fn start_upload(
     let cred_file = write_cred_file(&app, &req.access_key_id, &req.access_key_secret, &req.endpoint)?;
 
     let part_bytes = req.part_size_mb.max(1) * 1024 * 1024;
-    let target = req.target();
 
     let mut cmd = base_command(&app, &req.ossutil_path);
     cmd.arg("cp")
@@ -686,7 +767,7 @@ async fn start_upload(
         EVENT,
         UploadEvent::log(format!(
             "[start] {} -> {}  (jobs={}, parallel={}, part-size={}MB)",
-            source.display(),
+            source,
             target,
             req.jobs,
             req.parallel,
@@ -844,13 +925,16 @@ async fn verify_upload(app: AppHandle, req: UploadRequest) -> Result<VerifyResul
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             load_config,
             save_config,
             check_ossutil,
             oss_api,
+            oss_run,
             start_upload,
+            start_download,
             cancel_upload,
             verify_upload,
         ])

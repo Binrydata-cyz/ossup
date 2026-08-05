@@ -1,19 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import {
-	formatSize,
-	formatTime,
-	kindOf,
-	nextToken,
-	pickObjects,
-} from "./objects.js"
+import { kindOf, nextToken, pickObjects, typeLabel } from "./objects.ts"
 
 test("目录排在文件前面，名字去掉当前前缀", () => {
 	const got = pickObjects(
 		{
 			CommonPrefixes: [{ Prefix: "a/b/images/" }],
-			Contents: [{ Key: "a/b/note.txt", Size: "12", LastModified: "2026-01-02T03:04:05.000Z" }],
+			Contents: [
+				{ Key: "a/b/note.txt", Size: "12", LastModified: "2026-01-02T03:04:05.000Z" },
+			],
 		},
 		"a/b/",
 	)
@@ -51,27 +47,26 @@ test("nextToken 认字符串 true", () => {
 	assert.equal(nextToken({}), "")
 })
 
-test("kindOf 按扩展名分类", () => {
+test("kindOf 覆盖规格要求的七类", () => {
 	assert.equal(kindOf("a.json"), "code")
 	assert.equal(kindOf("a.jsonl"), "code")
 	assert.equal(kindOf("A.JSON"), "code")
 	assert.equal(kindOf("a.pdf"), "pdf")
 	assert.equal(kindOf("a.mp4"), "video")
+	assert.equal(kindOf("a.png"), "image")
+	assert.equal(kindOf("a.xlsx"), "sheet")
+	assert.equal(kindOf("a.zip"), "archive")
+	assert.equal(kindOf("a.docx"), "doc")
 	assert.equal(kindOf("a.bin"), "file")
 	assert.equal(kindOf("README"), "file")
 })
 
-test("formatSize 进位到合适单位", () => {
-	assert.equal(formatSize(0), "0 B")
-	assert.equal(formatSize(512), "512 B")
-	assert.equal(formatSize(1024), "1.0 KB")
-	assert.equal(formatSize(1536), "1.5 KB")
-	assert.equal(formatSize(1024 ** 3 * 2), "2.0 GB")
-	assert.equal(formatSize(NaN), "")
+test(".ts 归视频而非 TypeScript —— OSS 上更可能是传输流", () => {
+	assert.equal(kindOf("seg-001.ts"), "video")
 })
 
-test("formatTime 砍掉秒和毫秒", () => {
-	assert.equal(formatTime("2024-06-28T06:26:03.000Z"), "2024-06-28 06:26")
-	assert.equal(formatTime(""), "")
-	assert.equal(formatTime(undefined), "")
+test("typeLabel 带扩展名，文件夹只显示文件夹", () => {
+	assert.equal(typeLabel({ name: "a.xlsx", folder: false }), "XLSX 表格")
+	assert.equal(typeLabel({ name: "README", folder: false }), "文件")
+	assert.equal(typeLabel({ name: "images", folder: true }), "文件夹")
 })

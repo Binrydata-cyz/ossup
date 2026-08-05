@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { endpointOf, nextMarker, pickBuckets } from "./buckets.js"
+import { endpointOf, nextMarker, pickBuckets } from "./buckets.ts"
 
 const one = { Name: "a", Location: "oss-cn-hangzhou", StorageClass: "Standard" }
 

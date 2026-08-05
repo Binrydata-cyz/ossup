@@ -1,0 +1,1 @@
+# \\?\C:\appen\project\ossup\src-tauri\target\release\binaries\ossutil.exe cp --config-file C:\Users\user\AppData\Roaming\com.callisto.ossup\session.ossutilconfig -r -f oss://sh-eng-dataset-zjk/cyz_data/json1/ oss://sh-eng-dataset-zjk/cyz_data/json/

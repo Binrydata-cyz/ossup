@@ -1,23 +1,40 @@
-/* list-objects-v2 的解析 + 文件分类。和 buckets.js 一样刻意不 import tauri 和图片，
-   好让 node --test 直接跑。图标文件的映射在 fileicon.js。 */
+/* list-objects-v2 的解析 + 文件分类。和 buckets.ts 一样刻意不 import tauri 和图片，
+   好让 node --test 直接跑。种类到具体图标的映射在 icons.ts，展示格式化在 format.ts。 */
 
-const toArray = (v) => (Array.isArray(v) ? v : v ? [v] : [])
+export type OssItem = {
+	name: string
+	key: string
+	size: number
+	modified: string
+	storageClass: string
+	folder: boolean
+}
+
+const toArray = (v: unknown): any[] => (Array.isArray(v) ? v : v ? [v] : [])
 
 /* 去掉当前目录前缀，只留这一层的名字 */
-const strip = (key, prefix) => (key.startsWith(prefix) ? key.slice(prefix.length) : key)
+const strip = (key: string, prefix: string) =>
+	key.startsWith(prefix) ? key.slice(prefix.length) : key
 
 /* 目录（CommonPrefixes）排在文件（Contents）前面，和文件管理器一致。
    prefix 用 "" 表示 bucket 根。 */
-export function pickObjects(json, prefix = "") {
-	const folders = toArray(json?.CommonPrefixes)
-		.map((p) => {
+export function pickObjects(json: any, prefix = ""): OssItem[] {
+	const folders: OssItem[] = toArray(json?.CommonPrefixes)
+		.map((p: any) => {
 			const key = typeof p === "string" ? p : (p?.Prefix ?? "")
-			return { name: strip(key, prefix).replace(/\/$/, ""), key, folder: true }
+			return {
+				name: strip(key, prefix).replace(/\/$/, ""),
+				key,
+				size: 0,
+				modified: "",
+				storageClass: "",
+				folder: true,
+			}
 		})
 		.filter((o) => o.name)
 
-	const files = toArray(json?.Contents)
-		.map((c) => ({
+	const files: OssItem[] = toArray(json?.Contents)
+		.map((c: any) => ({
 			name: strip(c?.Key ?? "", prefix),
 			key: c?.Key ?? "",
 			size: Number(c?.Size ?? 0),
@@ -32,46 +49,75 @@ export function pickObjects(json, prefix = "") {
 }
 
 /* 和 ListBuckets 一样，布尔值是字符串 "true" */
-export function nextToken(json) {
+export function nextToken(json: any): string {
 	return String(json?.IsTruncated) === "true"
 		? (json?.NextContinuationToken ?? "")
 		: ""
 }
 
-const CODE = new Set([
-	"json", "jsonl", "js", "ts", "py", "sh", "yaml", "yml", "xml", "html", "css",
-	"csv", "tsv", "md", "txt", "log", "sql", "toml", "ini", "conf",
-])
-const VIDEO = new Set([
-	"mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "mpg", "mpeg", "ts",
-])
+export type Kind =
+	| "bucket"
+	| "folder"
+	| "image"
+	| "doc"
+	| "sheet"
+	| "archive"
+	| "code"
+	| "pdf"
+	| "video"
+	| "file"
 
-/* 返回图标种类，fileicon.js 再映射到具体 png。
-   注意 "ts" 既是 TypeScript 也是视频流封装——OSS 上更可能是视频，归 video。 */
-export function kindOf(name) {
-	const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase()
+/* 顺序即优先级：先查的赢。".ts" 同时是 TypeScript 和视频流封装，
+   OSS 上更可能是后者，所以 VIDEO 排在 CODE 前面。 */
+const BY_EXT: [Kind, Set<string>][] = [
+	["pdf", new Set(["pdf"])],
+	[
+		"image",
+		new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico", "tif", "tiff", "avif", "heic"]),
+	],
+	[
+		"video",
+		new Set(["mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "mpg", "mpeg", "ts"]),
+	],
+	["sheet", new Set(["xls", "xlsx", "xlsm", "csv", "tsv", "ods"])],
+	["doc", new Set(["doc", "docx", "odt", "rtf", "ppt", "pptx", "pages", "key"])],
+	["archive", new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst", "tgz"])],
+	[
+		"code",
+		new Set([
+			"json", "jsonl", "js", "mjs", "cjs", "jsx", "tsx", "py", "rs", "go", "java",
+			"c", "h", "cpp", "sh", "ps1", "yaml", "yml", "xml", "html", "css", "scss",
+			"md", "txt", "log", "sql", "toml", "ini", "conf", "env",
+		]),
+	],
+]
+
+export function kindOf(name: string): Kind {
 	if (!name.includes(".")) return "file"
-	if (ext === "pdf") return "pdf"
-	if (VIDEO.has(ext)) return "video"
-	if (CODE.has(ext)) return "code"
+	const ext = name.slice(name.lastIndexOf(".") + 1).toLowerCase()
+	for (const [kind, set] of BY_EXT) if (set.has(ext)) return kind
 	return "file"
 }
 
-const UNITS = ["B", "KB", "MB", "GB", "TB", "PB"]
-
-export function formatSize(bytes) {
-	if (!Number.isFinite(bytes) || bytes < 0) return ""
-	let n = bytes
-	let i = 0
-	while (n >= 1024 && i < UNITS.length - 1) {
-		n /= 1024
-		i++
-	}
-	return `${i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)} ${UNITS[i]}`
+/* 「类型」列显示的中文名 */
+const KIND_LABEL: Record<Kind, string> = {
+	bucket: "Bucket",
+	folder: "文件夹",
+	image: "图片",
+	doc: "文档",
+	sheet: "表格",
+	archive: "压缩包",
+	code: "代码",
+	pdf: "PDF",
+	video: "视频",
+	file: "文件",
 }
 
-/* "2024-06-28T06:26:03.000Z" -> "2024-06-28 06:26"，列表里看日期不需要秒 */
-export function formatTime(iso) {
-	const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(String(iso ?? ""))
-	return m ? `${m[1]} ${m[2]}` : ""
+export function typeLabel(item: Pick<OssItem, "name" | "folder">): string {
+	if (item.folder) return KIND_LABEL.folder
+	const ext = item.name.includes(".")
+		? item.name.slice(item.name.lastIndexOf(".") + 1).toUpperCase()
+		: ""
+	const kind = KIND_LABEL[kindOf(item.name)]
+	return ext ? `${ext} ${kind}` : kind
 }

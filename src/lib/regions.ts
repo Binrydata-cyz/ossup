@@ -1,0 +1,35 @@
+/* 阿里云 OSS 公共云地域。endpoint 一律是 oss-<地域id>.aliyuncs.com，所以只存 id + 中文名。
+   只列外网 endpoint：内网 endpoint 只有同地域 ECS 上能连，桌面机上选到就是白等超时。
+   ponytail: 不含金融云 / 政务云 / 无地域 Region，它们 endpoint 规则不同，手填即可。 */
+
+export const REGIONS: [string, string][] = [
+	["cn-hangzhou", "华东1 杭州"],
+	["cn-shanghai", "华东2 上海"],
+	["cn-nanjing", "华东5 南京 · 本地地域"],
+	["cn-fuzhou", "华东6 福州 · 本地地域"],
+	["cn-wuhan-lr", "华中1 武汉 · 本地地域"],
+	["cn-qingdao", "华北1 青岛"],
+	["cn-beijing", "华北2 北京"],
+	["cn-zhangjiakou", "华北3 张家口"],
+	["cn-huhehaote", "华北5 呼和浩特"],
+	["cn-wulanchabu", "华北6 乌兰察布"],
+	["cn-shenzhen", "华南1 深圳"],
+	["cn-heyuan", "华南2 河源"],
+	["cn-guangzhou", "华南3 广州"],
+	["cn-chengdu", "西南1 成都"],
+	["cn-hongkong", "中国香港"],
+	["ap-southeast-1", "新加坡"],
+	["ap-southeast-2", "澳大利亚 悉尼"],
+	["ap-southeast-3", "马来西亚 吉隆坡"],
+	["ap-southeast-5", "印尼 雅加达"],
+	["ap-southeast-6", "菲律宾 马尼拉"],
+	["ap-southeast-7", "泰国 曼谷"],
+	["ap-northeast-1", "日本 东京"],
+	["ap-northeast-2", "韩国 首尔"],
+	["us-west-1", "美国 硅谷"],
+	["us-east-1", "美国 弗吉尼亚"],
+	["eu-west-1", "英国 伦敦"],
+	["eu-central-1", "德国 法兰克福"],
+	["me-east-1", "阿联酋 迪拜"],
+	["me-central-1", "沙特 利雅得"],
+]
